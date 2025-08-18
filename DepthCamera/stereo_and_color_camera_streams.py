@@ -81,10 +81,10 @@ if __name__ == "__main__":
                         cv2.imshow('ColorCameraOut', image_color)
                 except:
                     print('ColorCamera queue is empty')
-                    break;
+                    break
 
                 if cv2.waitKey(1) == ord('x'):
-                    break;
+                    break
 
             cv2.destroyAllWindows()
 
@@ -99,10 +99,10 @@ if __name__ == "__main__":
                         cv2.imshow('StereoCameraOut', image_stereo)
                 except:
                     print('StereoCamera queue is empty')
-                    break;
+                    break
 
                 if cv2.waitKey(1) == ord('q'):
-                    break;
+                    break
 
             cv2.destroyAllWindows()
 
