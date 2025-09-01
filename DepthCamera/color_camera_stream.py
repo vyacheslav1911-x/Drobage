@@ -1,7 +1,8 @@
 import depthai as dai
 import cv2
-import numpy as np
+import time
 import threading
+
 
 pipeline = dai.Pipeline()
 color_cam = pipeline.create(dai.node.ColorCamera)
@@ -12,7 +13,8 @@ class ColorCamera():
         self.color_cam = color_cam
         self.xout_color = xout_color
         self._frame = None
-
+        self._lock = threading.Lock()
+        self.pipeline = pipeline
     def set_parameters(self):
         self.color_cam.setPreviewSize(1280, 720)  # set preview
         self.color_cam.setBoardSocket(dai.CameraBoardSocket.CAM_A)
@@ -24,34 +26,29 @@ class ColorCamera():
         self.xout_color.setStreamName('ColorCameraOut')
         self.color_cam.preview.link(self.xout_color.input)
 
+        self.device = None
+        self.queue = None
 
     def start_stream(self):
-        with dai.Device(pipeline) as device:
-            previewQueue_ColorCamera = device.getOutputQueue('ColorCameraOut', maxSize=4, blocking=True)
-            def stream_color_camera():
-                while True:
-                    try:
-                        if previewQueue_ColorCamera:
-                            frame_color = previewQueue_ColorCamera.get() #get the next frame from the queue
-                            self._frame = frame_color.getCvFrame() #conversion into NumPy array suitable for further image processing
-                            cv2.imshow('ColorCameraOut', self._frame)
-                    except:
-                        print('ColorCamera queue is empty')
-                        break;
+        """Start the pipeline and keep it active until the end of process"""
+        self.device = dai.Device(self.pipeline)
+        self.queue = self.device.getOutputQueue('ColorCameraOut', maxSize=4, blocking=False)
 
-                    if cv2.waitKey(1) == ord('q'):
-                        break;
-
-                cv2.destroyAllWindows()
-
-            stream_color_camera()
+        while True:
+            msg = self.queue.tryGet() #try to get the message in th queue, otherwise returns none
+            if msg is not None:
+                frame = msg.getCvFrame()
+                with self._lock: #lock the process
+                    self._frame = frame
+            time.sleep(0.01)
 
     @property
     def frame(self):
-        if self._frame is None:
-            raise ValueError('No frame returned')
-        else:
-            return self._frame
+        with self._lock:
+            if self._frame is None:
+                raise ValueError('No frame returned')
+            else:
+                return self._frame
 
 if __name__ == '__main__':
     color = ColorCamera()
