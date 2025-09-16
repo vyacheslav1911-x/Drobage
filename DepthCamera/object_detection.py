@@ -53,9 +53,9 @@ class PI_controller:
     def reduce_error_x(self, x_coord, x_center_coord):
         pwm = int(round(self.PI(1, 1, x_center_coord, x_coord)))
 
-        if pwm < 0:
+        if pwm > 0:
             command = f'{{"T":11,"L":0,"R":{abs(pwm)}}}'
-        elif pwm > 0:
+        elif pwm < 0:
             command = f'{{"T":11,"L":{abs(pwm)},"R":0}}'
         else:
             command = f'{{"T":11,"L":0,"R":0}}'
