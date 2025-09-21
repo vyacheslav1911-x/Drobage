@@ -55,3 +55,4 @@ if __name__ == '__main__':
     color.set_parameters()
     color.link_device()
     color.start_stream()
+
