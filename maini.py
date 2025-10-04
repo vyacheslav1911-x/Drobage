@@ -34,7 +34,8 @@ def PI(K, Ki, x_desired, x_actual):
     if(e<3 and e>-3):
         e=0
     
-    #when increasing the torque does not cause a trouble, only then we change the torque
+    #коли збільшення "газу" не спричинить халепи , то тільки тоді ми його збільшуємо
+    #when increasing the tork does not cause a trouble, only then we change the 
     u_ = Ki*I + K*e
     #checking if the theoretical PI sygnal is bigger that possible signal if so variable would_sat = True
     would_sat   = abs(u_) > 255
