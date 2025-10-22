@@ -32,21 +32,57 @@ calibData = dai.CalibrationHandler(jsonfile)
 # Create pipeline
 with dai.Pipeline() as pipeline_dai:
     pipeline_dai.setCalibrationData(calibData)
+
+    intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B)
+    f_x = intrinsics[0][0]
+    B = 0.075 #meters
+    print(B)
+
     cam = pipeline_dai.create(dai.node.Camera).build()
     videoQueue = cam.requestOutput((560, 560)).createOutputQueue()
 
+    monoLeft = pipeline_dai.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
+    monoRight = pipeline_dai.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
+    stereo = pipeline_dai.create(dai.node.StereoDepth)
+
+    # Linking
+    monoLeftOut = monoLeft.requestFullResolutionOutput()
+    monoRightOut = monoRight.requestFullResolutionOutput()
+    monoLeftOut.link(stereo.left)
+    monoRightOut.link(stereo.right)
+
+    stereo.setRectification(True)
+    stereo.setExtendedDisparity(True)
+    stereo.setLeftRightCheck(True)
+    stereo.setSubpixel(False)
+    stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5)
+
+    syncedLeftQueue = stereo.syncedLeft.createOutputQueue()
+    syncedRightQueue = stereo.syncedRight.createOutputQueue()
+    disparityQueue = stereo.disparity.createOutputQueue()
+
+    colorMap = cv2.applyColorMap(np.arange(256, dtype=np.uint8), cv2.COLORMAP_JET)
+    colorMap[0] = [0, 0, 0]  # to make zero-disparity pixels black
+
     pipeline_dai.start()
+    maxDisparity = 1
     while pipeline_dai.isRunning():
         while True:
             try:
                 videoIn = videoQueue.get()
                 assert isinstance(videoIn, dai.ImgFrame)
+
+                leftSynced = syncedLeftQueue.get()
+                rightSynced = syncedRightQueue.get()
+                disparity = disparityQueue.get()
+                assert isinstance(leftSynced, dai.ImgFrame)
+                assert isinstance(rightSynced, dai.ImgFrame)
+                assert isinstance(disparity, dai.ImgFrame)
             except ValueError:
                 continue
 
             frame = videoIn.getCvFrame()
             frame_copy = frame.copy()
-
             # ---------------------------
             # YOLO detection
             results = yolo_model.predict(
@@ -57,13 +93,17 @@ with dai.Pipeline() as pipeline_dai:
                 save=False
             )
             result = results[0]
-
+            x_center, y_center = None, None
+            x1, y1, x2, y2 = None, None, None, None
             if result.boxes is not None and len(result.boxes) > 0:
                 box = result.boxes[0]
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 x_center = int((x1 + x2) / 2)
                 y_center = int((y1 + y2) / 2)
+                print(x_center, y_center)
+
+
                 cv2.circle(frame_copy, (x_center, y_center), 5, (0, 255, 0), -1)
 
             # ---------------------------
@@ -83,9 +123,26 @@ with dai.Pipeline() as pipeline_dai:
             depth_vis = np.uint8(depth_vis)
             depth_colored = cv2.applyColorMap(depth_vis, cv2.COLORMAP_INFERNO)
 
+            npDisparity = disparity.getFrame()
+            resized_disparity = cv2.resize(npDisparity, (560, 560))
+            maxDisparity = max(maxDisparity, np.max(resized_disparity))
+            colorizedDisparity = cv2.applyColorMap(((resized_disparity / maxDisparity) * 255).astype(np.uint8), colorMap)
+
+            region = resized_disparity[y1:y2, x1:x2]
+
+            # Compute mean disparity (ignore zero disparity values)
+            valid_pixels = region[region > 0]
+            if valid_pixels.size > 0:
+                avg_disparity = np.mean(valid_pixels)
+                distance_m = (f_x * B) / avg_disparity
+                print(f"Average disparity: {avg_disparity:.2f}, Distance: {distance_m:.3f} m")
+            else:
+                print("No valid disparity in this region.")
+            #d = float(resized_disparity[0][y_center, x_center])
+
             # ---------------------------
             # Display
-            combined_streams = np.hstack([frame_copy, depth_colored])
+            combined_streams = np.hstack([frame_copy, depth_colored, colorizedDisparity])
             cv2.imshow("MERGED", combined_streams)
 
             if cv2.waitKey(1) == ord("q"):
