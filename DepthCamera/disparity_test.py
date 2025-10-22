@@ -1,153 +1,125 @@
 #!/usr/bin/env python3
-
+import sys
+import os
 import cv2
-import numpy as np
 import depthai as dai
-import argparse
+from ultralytics import YOLO
+import numpy as np
+from depth_anything_v2.dpt import DepthAnythingV2
+import torch
 
-# Weights to use when blending depth/rgb image (should equal 1.0)
-rgbWeight = 0.4
-depthWeight = 0.6
+# ---------------------------
+# Device setup
+device = torch.device("mps") if torch.backends.mps.is_available() else torch.device("cpu")
+print(f"Using device: {device}")
 
-parser = argparse.ArgumentParser()
-parser.add_argument('-alpha', type=float, default=None, help="Alpha scaling parameter to increase float. [0,1] valid interval.")
-args = parser.parse_args()
-alpha = args.alpha
+# ---------------------------
+# Load DepthAnything model
+depth_model = DepthAnythingV2(encoder='vitl')
+depth_model.load_state_dict(torch.load("checkpoints/depth_anything_v2_vitl.pth", map_location=device))
+depth_model.to(device)
+depth_model.eval()
 
-def updateBlendWeights(percent_rgb):
-    """
-    Update the rgb and depth weights used to blend depth/rgb image
+# ---------------------------
+# Load YOLO model
+yolo_model = YOLO("yolov8n.pt")
 
-    @param[in] percent_rgb The rgb weight expressed as a percentage (0..100)
-    """
-    global depthWeight
-    global rgbWeight
-    rgbWeight = float(percent_rgb)/100.0
-    depthWeight = 1.0 - rgbWeight
-
-
-fps = 30
-# The disparity is computed at this resolution, then upscaled to RGB resolution
-monoResolution = dai.MonoCameraProperties.SensorResolution.THE_480_P
+# ---------------------------
+# DepthAI setup
+jsonfile = "/Users/ivan/depthai/resources/184430101153051300_09_28_25_13_00.json"
+calibData = dai.CalibrationHandler(jsonfile)
 
 # Create pipeline
-pipeline = dai.Pipeline()
-#try:
-#    calibData = dai.CalibrationHandler("/Users/ivan/depthai/resources/184430101153051300_09_28_25_13_00.json")
-#    pipeline.setCalibrationData(calibData)
-#except Exception as e:
-#    print(f"[WARN] Could not load calibration JSON: {e}")
+with dai.Pipeline() as pipeline_dai:
+    pipeline_dai.setCalibrationData(calibData)
+    cam = pipeline_dai.create(dai.node.Camera).build()
+    videoQueue = cam.requestOutput((560, 560)).createOutputQueue()
 
-device = dai.Device()
-queueNames = []
+    monoLeft = pipeline_dai.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
+    monoRight = pipeline_dai.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
+    stereo = pipeline_dai.create(dai.node.StereoDepth)
 
+    # Linking
+    monoLeftOut = monoLeft.requestFullResolutionOutput()
+    monoRightOut = monoRight.requestFullResolutionOutput()
+    monoLeftOut.link(stereo.left)
+    monoRightOut.link(stereo.right)
 
+    stereo.setRectification(True)
+    stereo.setExtendedDisparity(True)
+    stereo.setLeftRightCheck(True)
 
-# Define sources and outputs
-camRgb = pipeline.create(dai.node.Camera)
-left = pipeline.create(dai.node.MonoCamera)
-right = pipeline.create(dai.node.MonoCamera)
-stereo = pipeline.create(dai.node.StereoDepth)
+    syncedLeftQueue = stereo.syncedLeft.createOutputQueue()
+    syncedRightQueue = stereo.syncedRight.createOutputQueue()
+    disparityQueue = stereo.disparity.createOutputQueue()
 
-rgbOut = pipeline.create(dai.node.XLinkOut)
-disparityOut = pipeline.create(dai.node.XLinkOut)
+    colorMap = cv2.applyColorMap(np.arange(256, dtype=np.uint8), cv2.COLORMAP_JET)
+    colorMap[0] = [0, 0, 0]  # to make zero-disparity pixels black
 
-rgbOut.setStreamName("rgb")
-queueNames.append("rgb")
-disparityOut.setStreamName("disp")
-queueNames.append("disp")
+    pipeline_dai.start()
+    maxDisparity = 1
+    while pipeline_dai.isRunning():
+        while True:
+            try:
+                videoIn = videoQueue.get()
+                assert isinstance(videoIn, dai.ImgFrame)
 
-#Properties
-rgbCamSocket = dai.CameraBoardSocket.CAM_A
+                leftSynced = syncedLeftQueue.get()
+                rightSynced = syncedRightQueue.get()
+                disparity = disparityQueue.get()
+                assert isinstance(leftSynced, dai.ImgFrame)
+                assert isinstance(rightSynced, dai.ImgFrame)
+                assert isinstance(disparity, dai.ImgFrame)
+            except ValueError:
+                continue
 
-camRgb.setBoardSocket(rgbCamSocket)
-camRgb.setSize(1280, 720)
-camRgb.setFps(fps)
+            frame = videoIn.getCvFrame()
+            frame_copy = frame.copy()
 
-# For now, RGB needs fixed focus to properly align with depth.
-# This value was used during calibration
+            # ---------------------------
+            # YOLO detection
+            results = yolo_model.predict(
+                source=frame,
+                show=False,
+                classes=[47],
+                max_det=1,
+                save=False
+            )
+            result = results[0]
 
-left.setResolution(monoResolution)
-left.setBoardSocket(dai.CameraBoardSocket.CAM_B)
-left.setFps(fps)
-right.setResolution(monoResolution)
-right.setBoardSocket(dai.CameraBoardSocket.CAM_C)
-right.setFps(fps)
+            if result.boxes is not None and len(result.boxes) > 0:
+                box = result.boxes[0]
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                x_center = int((x1 + x2) / 2)
+                y_center = int((y1 + y2) / 2)
+                cv2.circle(frame_copy, (x_center, y_center), 5, (0, 255, 0), -1)
 
-stereo.setDefaultProfilePreset(dai.node.StereoDepth.PresetMode.HIGH_DENSITY)
-# LR-check is required for depth alignment
-stereo.setLeftRightCheck(True)
-stereo.setDepthAlign(rgbCamSocket)
+            # ---------------------------
+            # DepthAnything inference
+            # Resize to multiple of 14 (e.g., 560x560)
+            resized_frame = cv2.resize(frame, (560, 560))
 
-# Linking
-camRgb.video.link(rgbOut.input)
-left.out.link(stereo.left)
-right.out.link(stereo.right)
-stereo.disparity.link(disparityOut.input)
+            frame_tensor = torch.from_numpy(resized_frame).float() / 255.0  # normalize
+            frame_tensor = frame_tensor.permute(2, 0, 1).unsqueeze(0).to(device)
 
-camRgb.setMeshSource(dai.CameraProperties.WarpMeshSource.NONE)
-if alpha is not None:
-    camRgb.setCalibrationAlpha(alpha)
-    stereo.setAlphaScaling(alpha)
+            with torch.no_grad():
+                depth_map = depth_model(frame_tensor)
+                depth_map = depth_map.squeeze().cpu().numpy()
 
-# Connect to device and start pipeline
-with device:
-    device.startPipeline(pipeline)
+            # Normalize and colorize depth map
+            depth_vis = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX)
+            depth_vis = np.uint8(depth_vis)
+            depth_colored = cv2.applyColorMap(depth_vis, cv2.COLORMAP_INFERNO)
 
-    for cam in device.getConnectedCameraFeatures():
-        print("Camera socket:", cam.socket, "Name:", cam.name, "Type:", cam.sensorName)
+            npDisparity = disparity.getFrame()
+            resized_disparity = cv2.resize(npDisparity, (560, 560))
+            maxDisparity = max(maxDisparity, np.max(resized_disparity))
+            colorizedDisparity = cv2.applyColorMap(((resized_disparity / maxDisparity) * 255).astype(np.uint8), colorMap)
+            # ---------------------------
+            # Display
+            combined_streams = np.hstack([frame_copy, depth_colored])
+            cv2.imshow("MERGED", combined_streams)
 
-    frameRgb = None
-    frameDisp = None
-
-    # Configure windows; trackbar adjusts blending ratio of rgb/depth
-    rgbWindowName = "rgb"
-    depthWindowName = "depth"
-    blendedWindowName = "rgb-depth"
-    cv2.namedWindow(rgbWindowName)
-    cv2.namedWindow(depthWindowName)
-    cv2.namedWindow(blendedWindowName)
-    cv2.createTrackbar('RGB Weight %', blendedWindowName, int(rgbWeight*100), 100, updateBlendWeights)
-
-    while True:
-        latestPacket = {}
-        latestPacket["rgb"] = None
-        latestPacket["disp"] = None
-
-        queueEvents = device.getQueueEvents(("rgb", "disp"))
-        for queueName in queueEvents:
-            packets = device.getOutputQueue(queueName).tryGetAll()
-            if len(packets) > 0:
-                latestPacket[queueName] = packets[-1]
-
-        if latestPacket["rgb"] is not None:
-            print(latestPacket["rgb"])
-            frameRgb = latestPacket["rgb"].getCvFrame()
-            cv2.imshow(rgbWindowName, frameRgb)
-
-        if latestPacket["disp"] is not None:
-            frameDisp = latestPacket["disp"].getFrame()
-            maxDisparity = stereo.initialConfig.getMaxDisparity()
-            print(f"Max Disparity:", {maxDisparity}) #added
-            # Optional, extend range 0..95 -> 0..255, for a better visualisation
-            if 1: frameDisp = (frameDisp * 255. / maxDisparity).astype(np.uint8)
-            # Optional, apply false colorization
-            if 1: frameDisp = cv2.applyColorMap(frameDisp, cv2.COLORMAP_HOT)
-            frameDisp = np.ascontiguousarray(frameDisp)
-            print("Frame Disparity:", frameDisp.shape, "dtype:", frameDisp.dtype,
-                  "min:", frameDisp.min(), "max:", frameDisp.max())
-            cv2.imshow(depthWindowName, frameDisp)
-
-        # Blend when both received
-        if frameRgb is not None and frameDisp is not None:
-            # Need to have both frames in BGR format before blending
-            print("RGB shape:", frameRgb.shape, "min/max:", frameRgb.min(), frameRgb.max()) #added
-            if len(frameDisp.shape) < 3:
-                frameDisp = cv2.cvtColor(frameDisp, cv2.COLOR_GRAY2BGR)
-            blended = cv2.addWeighted(frameRgb, rgbWeight, frameDisp, depthWeight, 0)
-            cv2.imshow(blendedWindowName, blended)
-            frameRgb = None
-            frameDisp = None
-
-        if cv2.waitKey(1) == ord('q'):
-            break
+            if cv2.waitKey(1) == ord("q"):
+                break
