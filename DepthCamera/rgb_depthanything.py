@@ -33,13 +33,14 @@ calibData = dai.CalibrationHandler(jsonfile)
 with dai.Pipeline() as pipeline_dai:
     pipeline_dai.setCalibrationData(calibData)
 
+# get intrinsic parameters
     intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B)
     f_x = intrinsics[0][0]
     B = 0.075 #meters
     print(B)
 
     cam = pipeline_dai.create(dai.node.Camera).build()
-    videoQueue = cam.requestOutput((560, 560)).createOutputQueue()
+    videoQueue = cam.requestOutput((640, 480)).createOutputQueue()
 
     monoLeft = pipeline_dai.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
     monoRight = pipeline_dai.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
@@ -51,12 +52,13 @@ with dai.Pipeline() as pipeline_dai:
     monoLeftOut.link(stereo.left)
     monoRightOut.link(stereo.right)
 
+    stereo.setOutputSize(640, 480)
     stereo.setRectification(True)
-    stereo.setExtendedDisparity(True)
+    stereo.setExtendedDisparity(False)
     stereo.setLeftRightCheck(True)
     stereo.setSubpixel(False)
-    stereo.initialConfig.setMedianFilter(dai.MedianFilter.KERNEL_5x5)
-
+    stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
+    # Syncing
     syncedLeftQueue = stereo.syncedLeft.createOutputQueue()
     syncedRightQueue = stereo.syncedRight.createOutputQueue()
     disparityQueue = stereo.disparity.createOutputQueue()
@@ -92,25 +94,27 @@ with dai.Pipeline() as pipeline_dai:
                 max_det=1,
                 save=False
             )
+            # Draw bounding boxes
             result = results[0]
             x_center, y_center = None, None
             x1, y1, x2, y2 = None, None, None, None
             if result.boxes is not None and len(result.boxes) > 0:
                 box = result.boxes[0]
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                cv2.rectangle(frame_copy, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 x_center = int((x1 + x2) / 2)
                 y_center = int((y1 + y2) / 2)
                 print(x_center, y_center)
 
 
-                cv2.circle(frame_copy, (x_center, y_center), 5, (0, 255, 0), -1)
+                cv2.circle(frame, (x_center, y_center), 5, (0, 255, 0), -1)
 
             # ---------------------------
             # DepthAnything inference
             # Resize to multiple of 14 (e.g., 560x560)
             resized_frame = cv2.resize(frame, (560, 560))
 
+            # Convert to tensor
             frame_tensor = torch.from_numpy(resized_frame).float() / 255.0  # normalize
             frame_tensor = frame_tensor.permute(2, 0, 1).unsqueeze(0).to(device)
 
@@ -123,26 +127,27 @@ with dai.Pipeline() as pipeline_dai:
             depth_vis = np.uint8(depth_vis)
             depth_colored = cv2.applyColorMap(depth_vis, cv2.COLORMAP_INFERNO)
 
-            npDisparity = disparity.getFrame()
+            npDisparity = disparity.getFrame().astype(np.float32)
             resized_disparity = cv2.resize(npDisparity, (560, 560))
             maxDisparity = max(maxDisparity, np.max(resized_disparity))
             colorizedDisparity = cv2.applyColorMap(((resized_disparity / maxDisparity) * 255).astype(np.uint8), colorMap)
-
+            
+            #Get bounding box disparity region
             region = resized_disparity[y1:y2, x1:x2]
 
             # Compute mean disparity (ignore zero disparity values)
             valid_pixels = region[region > 0]
             if valid_pixels.size > 0:
-                avg_disparity = np.mean(valid_pixels)
-                distance_m = (f_x * B) / avg_disparity
-                print(f"Average disparity: {avg_disparity:.2f}, Distance: {distance_m:.3f} m")
+                median_disparity = np.median(valid_pixels)
+                distance_m = (f_x * B) / median_disparity
+                print(f"Median disparity: {median_disparity:.2f}, Distance: {distance_m/2:.3f} m")
             else:
                 print("No valid disparity in this region.")
             #d = float(resized_disparity[0][y_center, x_center])
 
             # ---------------------------
             # Display
-            combined_streams = np.hstack([frame_copy, depth_colored, colorizedDisparity])
+            combined_streams = np.hstack([resized_frame, depth_colored, colorizedDisparity])
             cv2.imshow("MERGED", combined_streams)
 
             if cv2.waitKey(1) == ord("q"):
