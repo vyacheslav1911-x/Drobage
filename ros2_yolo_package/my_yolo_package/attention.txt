@@ -1,0 +1,1 @@
+Dont forget to locate yolo model in this case yolov8n.pt model in the folder install/pkg_name/share/pkg_name/models
