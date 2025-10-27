@@ -1,4 +1,5 @@
 # visualizer_node.py
+#LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1 ros2 run my_yolo_package visualizer_node 
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
