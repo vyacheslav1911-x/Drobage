@@ -5,8 +5,10 @@ import cv2
 import depthai as dai
 from ultralytics import YOLO
 import numpy as np
-from depth_anything_v2.dpt import DepthAnythingV2
 import torch
+from transformers import AutoImageProcessor, AutoModelForDepthEstimation
+from PIL import Image
+import requests
 
 # ---------------------------
 # Device setup
@@ -14,11 +16,15 @@ device = torch.device("mps") if torch.backends.mps.is_available() else torch.dev
 print(f"Using device: {device}")
 
 # ---------------------------
-# Load DepthAnything model
-depth_model = DepthAnythingV2(encoder='vitl')
-depth_model.load_state_dict(torch.load("checkpoints/depth_anything_v2_vitl.pth", map_location=device))
-depth_model.to(device)
-depth_model.eval()
+# Load Hugging Face DepthAnything metric model (Indoor)
+processor = AutoImageProcessor.from_pretrained(
+    "depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf",
+    use_fast=False
+)
+hf_model = AutoModelForDepthEstimation.from_pretrained(
+    "depth-anything/Depth-Anything-V2-Metric-Indoor-Large-hf"
+).to(device)
+hf_model.eval()
 
 # ---------------------------
 # Load YOLO model
@@ -33,12 +39,12 @@ calibData = dai.CalibrationHandler(jsonfile)
 with dai.Pipeline() as pipeline_dai:
     pipeline_dai.setCalibrationData(calibData)
 
-# get intrinsic parameters
+    # DepthAI intrinsics (for reference if using stereo disparity)
     intrinsics = calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B)
     f_x = intrinsics[0][0]
-    B = 0.075 #meters
-    print(B)
+    B = 0.075  # meters
 
+    # Camera setup
     cam = pipeline_dai.create(dai.node.Camera).build()
     videoQueue = cam.requestOutput((640, 480)).createOutputQueue()
 
@@ -54,100 +60,98 @@ with dai.Pipeline() as pipeline_dai:
 
     stereo.setOutputSize(640, 480)
     stereo.setRectification(True)
-    stereo.setExtendedDisparity(False)
+    stereo.setExtendedDisparity(True)
     stereo.setLeftRightCheck(True)
     stereo.setSubpixel(False)
     stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
-    # Syncing
+
     syncedLeftQueue = stereo.syncedLeft.createOutputQueue()
     syncedRightQueue = stereo.syncedRight.createOutputQueue()
     disparityQueue = stereo.disparity.createOutputQueue()
 
     colorMap = cv2.applyColorMap(np.arange(256, dtype=np.uint8), cv2.COLORMAP_JET)
-    colorMap[0] = [0, 0, 0]  # to make zero-disparity pixels black
+    colorMap[0] = [0, 0, 0]
 
     pipeline_dai.start()
     maxDisparity = 1
+
     while pipeline_dai.isRunning():
-        while True:
-            try:
-                videoIn = videoQueue.get()
-                assert isinstance(videoIn, dai.ImgFrame)
+        try:
+            videoIn = videoQueue.get()
+            assert isinstance(videoIn, dai.ImgFrame)
+            leftSynced = syncedLeftQueue.get()
+            rightSynced = syncedRightQueue.get()
+            disparity = disparityQueue.get()
+        except ValueError:
+            continue
 
-                leftSynced = syncedLeftQueue.get()
-                rightSynced = syncedRightQueue.get()
-                disparity = disparityQueue.get()
-                assert isinstance(leftSynced, dai.ImgFrame)
-                assert isinstance(rightSynced, dai.ImgFrame)
-                assert isinstance(disparity, dai.ImgFrame)
-            except ValueError:
-                continue
+        frame = videoIn.getCvFrame()
 
-            frame = videoIn.getCvFrame()
-            #frame_copy = frame.copy()
-            # ---------------------------
-            # YOLO detection
-            results = yolo_model.predict(
-                source=frame,
-                show=False,
-                classes=[47],
-                max_det=1,
-                save=False
-            )
-            # Draw bounding boxes
-            result = results[0]
-            x_center, y_center = None, None
-            x1, y1, x2, y2 = None, None, None, None
-            if result.boxes is not None and len(result.boxes) > 0:
-                box = result.boxes[0]
-                x1, y1, x2, y2 = map(int, box.xyxy[0])
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                x_center = int((x1 + x2) / 2)
-                y_center = int((y1 + y2) / 2)
-                print(x_center, y_center)
+        # ---------------------------
+        # YOLO detection
+        results = yolo_model.predict(
+            source=frame,
+            show=False,
+            classes=[47],
+            max_det=1,
+            save=False
+        )
 
+        x1 = y1 = x2 = y2 = None
+        result = results[0]
+        if result.boxes is not None and len(result.boxes) > 0:
+            box = result.boxes[0]
+            x1, y1, x2, y2 = map(int, box.xyxy[0])
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            x_center = int((x1 + x2) / 2)
+            y_center = int((y1 + y2) / 2)
+            cv2.circle(frame, (x_center, y_center), 5, (0, 255, 0), -1)
 
-                cv2.circle(frame, (x_center, y_center), 5, (0, 255, 0), -1)
+        # ---------------------------
+        # Hugging Face DepthAnything metric inference
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        pil_image = Image.fromarray(frame_rgb)
+        inputs = processor(images=pil_image, return_tensors="pt").to(device)
 
-            # ---------------------------
-            # DepthAnything inference
-            # Resize to multiple of 14 (e.g., 560x560)
-            resized_frame = cv2.resize(frame, (560, 560))
+        with torch.no_grad():
+            outputs = hf_model(**inputs)
+            predicted_depth = outputs.predicted_depth  # meters
 
-            # Convert to tensor
-            frame_tensor = torch.from_numpy(resized_frame).float() / 255.0  # normalize
-            frame_tensor = frame_tensor.permute(2, 0, 1).unsqueeze(0).to(device)
+        depth_resized = torch.nn.functional.interpolate(
+            predicted_depth.unsqueeze(1),
+            size=(frame.shape[0], frame.shape[1]),
+            mode="bicubic",
+            align_corners=False
+        ).squeeze().cpu().numpy()
 
-            with torch.no_grad():
-                depth_map = depth_model(frame_tensor)
-                depth_map = depth_map.squeeze().cpu().numpy()
+        # Colorize metric depth
+        depth_vis = (depth_resized - np.min(depth_resized)) / (np.max(depth_resized) - np.min(depth_resized))
+        depth_vis = (depth_vis * 255).astype(np.uint8)
+        depth_colored = cv2.applyColorMap(depth_vis, cv2.COLORMAP_INFERNO)
 
-            # Normalize and colorize depth map
-            depth_vis = cv2.normalize(depth_map, None, 0, 255, cv2.NORM_MINMAX)
-            depth_vis = np.uint8(depth_vis)
-            depth_colored = cv2.applyColorMap(depth_vis, cv2.COLORMAP_INFERNO)
+        # ---------------------------
+        # Optional: DepthAI disparity
+        npDisparity = disparity.getFrame().astype(np.float32)
+        resized_disparity = cv2.resize(npDisparity, (frame.shape[1], frame.shape[0]))
+        maxDisparity = max(maxDisparity, np.max(resized_disparity))
+        colorizedDisparity = cv2.applyColorMap(
+            ((resized_disparity / maxDisparity) * 255).astype(np.uint8),
+            colorMap
+        )
 
-            npDisparity = disparity.getFrame().astype(np.float32)
-            resized_disparity = cv2.resize(npDisparity, (560, 560))
-            maxDisparity = max(maxDisparity, np.max(resized_disparity))
-            colorizedDisparity = cv2.applyColorMap(((resized_disparity / maxDisparity) * 255).astype(np.uint8), colorMap)
-
-            #Get bounding box disparity region
-            region = resized_disparity[y1:y2, x1:x2]
-
-            # Compute mean disparity (ignore zero disparity values)
-            valid_pixels = region[region > 0]
-            if valid_pixels.size > 0 and result.boxes is not None and len(result.boxes) > 0:
-                median_disparity = np.median(valid_pixels)
-                distance_m = (f_x * B) / median_disparity
-                print(f"Median disparity: {median_disparity:.2f}, Distance: {distance_m/2:.3f} m")
-            elif result.boxes is None and len(result.boxes) < 0:
-                print("No valid disparity in this region.")
+        # Compute distance of object from metric depth
+        if x1 is not None and y1 is not None:
+            distance = depth_resized[y_center, x_center]
+            print(f"Object distance DEPTHANYTHING(metric): {distance/2.5:.2f} m")
 
 
-            # ---------------------------
-            # Display
-            combined_streams = np.hstack([resized_frame, depth_colored, colorizedDisparity])
-            cv2.imshow("MERGED", combined_streams)
-            if cv2.waitKey(1) == ord("q"):
-                break
+        if x1 is not None and y1 is not None:
+            disparity_value = resized_disparity[y_center, x_center]
+            distance_m = (f_x * B) / disparity_value
+            print(f"Object distance DEPTHAI(metric): {distance_m:.2f} m")
+        # ---------------------------
+        # Display
+        combined_streams = np.hstack([frame, depth_colored, colorizedDisparity])
+        cv2.imshow("MERGED", combined_streams)
+        if cv2.waitKey(1) == ord("q"):
+            break
