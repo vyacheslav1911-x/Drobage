@@ -84,7 +84,7 @@ with dai.Pipeline() as pipeline_dai:
                 continue
 
             frame = videoIn.getCvFrame()
-            frame_copy = frame.copy()
+            #frame_copy = frame.copy()
             # ---------------------------
             # YOLO detection
             results = yolo_model.predict(
@@ -131,24 +131,23 @@ with dai.Pipeline() as pipeline_dai:
             resized_disparity = cv2.resize(npDisparity, (560, 560))
             maxDisparity = max(maxDisparity, np.max(resized_disparity))
             colorizedDisparity = cv2.applyColorMap(((resized_disparity / maxDisparity) * 255).astype(np.uint8), colorMap)
-            
+
             #Get bounding box disparity region
             region = resized_disparity[y1:y2, x1:x2]
 
             # Compute mean disparity (ignore zero disparity values)
             valid_pixels = region[region > 0]
-            if valid_pixels.size > 0:
+            if valid_pixels.size > 0 and result.boxes is not None and len(result.boxes) > 0:
                 median_disparity = np.median(valid_pixels)
                 distance_m = (f_x * B) / median_disparity
                 print(f"Median disparity: {median_disparity:.2f}, Distance: {distance_m/2:.3f} m")
-            else:
+            elif result.boxes is None and len(result.boxes) < 0:
                 print("No valid disparity in this region.")
-            #d = float(resized_disparity[0][y_center, x_center])
+
 
             # ---------------------------
             # Display
             combined_streams = np.hstack([resized_frame, depth_colored, colorizedDisparity])
             cv2.imshow("MERGED", combined_streams)
-
             if cv2.waitKey(1) == ord("q"):
                 break
