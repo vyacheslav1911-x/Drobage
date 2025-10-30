@@ -145,12 +145,43 @@ with dai.Pipeline() as pipeline_dai:
             print(f"Object distance DEPTHANYTHING(metric): {distance/2.5:.2f} m")
 
 
+        TARGET_DISTANCE = 0.3
+        integral_error = 0
+        Kp = 1000
+        Ki = 8
+        ip_addr = "192.168.4.1"
         if x1 is not None and y1 is not None:
             disparity_value = resized_disparity[y_center, x_center]
+            print("Disparity:",disparity_value)
+            if disparity_value < 0.1:
+                disparity_value = 0.1
             distance_m = (f_x * B) / disparity_value
+            error = distance_m - TARGET_DISTANCE
+            integral_error += error
+            control_output = Kp * error + Ki * integral_error
+            speed = max(0, min(255, float(control_output)))
+            print("Error: ", error)
+            print("Speed: ", speed)
+            command = f'{{"T":11,"L":{int(speed)},"R":{int(speed)}}}'
+            try:
+                url = f"http://{ip_addr}/js?json={command}"
+                requests.get(url, timeout=0.15)
+            except Exception as ex:
+                print("HTTP error:", ex)
+
+            if distance_m <= TARGET_DISTANCE:
+                # Stop the rover
+                stop_cmd = '{"T":11,"L":0,"R":0}'
+                try:
+                    requests.get(f"http://{ip_addr}/js?json={stop_cmd}", timeout=0.15)
+                except Exception as ex:
+                    print("HTTP error while stopping:", ex)
+                integral = 0
+                print("✅ Target reached — stopping rover.")
             print(f"Object distance DEPTHAI(metric): {distance_m:.2f} m")
         # ---------------------------
         # Display
+
         combined_streams = np.hstack([frame, depth_colored, colorizedDisparity])
         cv2.imshow("MERGED", combined_streams)
         if cv2.waitKey(1) == ord("q"):
