@@ -58,7 +58,7 @@ class ManagerNode(Node):
         super().__init__('robot_ctrl_manager')
         #coefficient of scaling the error message
         self.declare_parameter('side_k', 0.9)
-        self.declare_parameter('side_ki', 0.1)
+        self.declare_parameter('side_ki', 0.2)
         self.declare_parameter('side_kd', 0.7)
         self.k_s = self.get_parameter('side_k').get_parameter_value().double_value
         self.ki_s = self.get_parameter('side_ki').get_parameter_value().double_value
