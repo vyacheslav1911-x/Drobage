@@ -7,9 +7,9 @@ import requests
 from requests.exceptions import RequestException, Timeout, ConnectionError
 def reduce_side_error(pwm, ip):
     if(pwm>0):
-                command = f'{{"T":11,"L":0,"R":{(abs(pwm))}}}'
+                command = f'{{"T":11,"L":-(abs(pwm)),"R":{(abs(pwm))}}}'
     elif(pwm <0):
-                command = f'{{"T":11,"L":{(abs(pwm))},"R":0}}'
+                command = f'{{"T":11,"L":{(abs(pwm))},"R":-(abs(pwm))}}'
     else:
                 command = f'{{"T":11,"L":0,"R":0}}'
     url = "http://" + ip + "/js?json=" + command
