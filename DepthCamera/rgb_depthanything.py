@@ -147,25 +147,27 @@ with dai.Pipeline() as pipeline_dai:
 
         TARGET_DISTANCE = 0.3
         integral_error = 0
-        Kp = 1000
+        Kp = 400
         Ki = 8
         ip_addr = "192.168.4.1"
         if x1 is not None and y1 is not None:
-            disparity_value = resized_disparity[y_center, x_center]
-            print("Disparity:",disparity_value)
+            region = resized_disparity[y1:y2, x1:x2]
+            valid_pixels = region[region > 0]
+            disparity_value = np.mean(valid_pixels)
+            print("Disparity:", disparity_value)
             if disparity_value < 0.1:
                 disparity_value = 0.1
             distance_m = (f_x * B) / disparity_value
             error = distance_m - TARGET_DISTANCE
             integral_error += error
             control_output = Kp * error + Ki * integral_error
-            speed = max(0, min(255, float(control_output)))
+            speed = max(60, min(255, float(control_output)))
             print("Error: ", error)
             print("Speed: ", speed)
             command = f'{{"T":11,"L":{int(speed)},"R":{int(speed)}}}'
             try:
                 url = f"http://{ip_addr}/js?json={command}"
-                requests.get(url, timeout=0.15)
+                requests.get(url, timeout=0.1)
             except Exception as ex:
                 print("HTTP error:", ex)
 
@@ -173,7 +175,7 @@ with dai.Pipeline() as pipeline_dai:
                 # Stop the rover
                 stop_cmd = '{"T":11,"L":0,"R":0}'
                 try:
-                    requests.get(f"http://{ip_addr}/js?json={stop_cmd}", timeout=0.15)
+                    requests.get(f"http://{ip_addr}/js?json={stop_cmd}", timeout=0.1)
                 except Exception as ex:
                     print("HTTP error while stopping:", ex)
                 integral = 0
