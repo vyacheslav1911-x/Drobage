@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
+import depthai as dai
+import torch
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 import cv2
 from cv_bridge import CvBridge
-import depthai as dai
 import atexit # To ensure clean shutdown
 
 class OakCameraNode(Node):
@@ -18,47 +18,50 @@ class OakCameraNode(Node):
         #depthAI pipeline setup
         self.get_logger().info("Configuring DepthAI pipeline...")
         self.pipeline = dai.Pipeline()
-        cam_rgb = self.pipeline.create(dai.node.ColorCamera)
+        self.cam_rgb = self.pipeline.create(dai.node.Camera).build()
+        self.videoQueue = self.cam_rgb.requestOutput((640, 480)).createOutputQueue()
         #rgb Cam_a
-        cam_rgb.setBoardSocket(dai.CameraBoardSocket.CAM_A)
-        cam_rgb.setResolution(dai.ColorCameraProperties.SensorResolution.THE_1080_P)
-        cam_rgb.setPreviewSize(640, 480) 
-        cam_rgb.setFps(video_fps)
-        cam_rgb.setInterleaved(False)
+        #cam_rgb.setBoardSocket(dai.CameraBoardSocket.CAM_A) 
+        #cam_rgb.setFps(video_fps)
+        #cam_rgb.setInterleaved(False)
 
         # XLinkOut node to send frames to the host (this computer)
-        xout_rgb = self.pipeline.create(dai.node.XLinkOut)
-        xout_rgb.setStreamName("rgb")
-        cam_rgb.preview.link(xout_rgb.input)
-        
+       #xout_rgb = self.pipeline.create(dai.node.XLinkOut)
+       #xout_rgb.setStreamName("rgb")
+       #cam_rgb.preview.link(xout_rgb.input)
+
         # conecting and setting the device
         try:
             self.get_logger().info("connecting to oak camera...")
-            self.device = dai.Device(self.pipeline)
+            self.pipeline.start()
             self.get_logger().info("oak camera connected.")
             # output queue from the device
-            self.video_queue = self.device.getOutputQueue(name="rgb", maxSize=4, blocking=False)
+            while self.pipeline.isRunning():
+                self.videoIn = self.videoQueue.get()
+                assert isinstance(self.videoIn, dai.ImgFrame)
+                cv2.imshow("Video", self.videoIn.getCvFrame())
+                if cv2.waitKey(1) == ord("q"):
+                    break
         except Exception as e:
             self.get_logger().error(f"Failed to connect to OAK-D: {e}")
             rclpy.shutdown()
             return
-            
         # --- ROS Timer ---
         timer_period = float(1.0 / video_fps)
         self.timer = self.create_timer(timer_period, self.time_callback)
         self.get_logger().info(f"OAK-D node started, publishing to /image_raw at {video_fps} FPS.")
-        
+
         # Ensure clean shutdown
         atexit.register(self.cleanup)
 
     def time_callback(self):
         # Get frame from OAK-D queue
-        in_rgb = self.video_queue.tryGet()
+        in_rgb = self.videoQueue.get()
 
         if in_rgb is not None:
             # Convert DepthAI frame to OpenCV format (BGR)
             frame = in_rgb.getCvFrame()
-            
+
             # Convert the OpenCV image (BGR) to a ROS Image message
             ros_image = self.bridge.cv2_to_imgmsg(frame, "bgr8")
 
@@ -75,7 +78,7 @@ class OakCameraNode(Node):
         if hasattr(self, 'device'):
             self.device.close()
             self.get_logger().info("OAK-D device closed.")
-
+    
 def main(args=None):
     rclpy.init(args=args)
     camera_node = OakCameraNode()
@@ -84,7 +87,7 @@ def main(args=None):
     except (SystemExit, KeyboardInterrupt):
         pass
     finally:
-        
+
         camera_node.destroy_node()
         rclpy.shutdown()
 
