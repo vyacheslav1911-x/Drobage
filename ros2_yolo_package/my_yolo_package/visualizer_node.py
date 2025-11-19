@@ -1,84 +1,63 @@
-# visualizer_node.py
-#LD_PRELOAD=/lib/aarch64-linux-gnu/libgomp.so.1 ros2 run my_yolo_package visualizer_node 
-import rclpy
-from rclpy.node import Node
-from sensor_msgs.msg import Image
-from vision_msgs.msg import Detection2DArray
-from cv_bridge import CvBridge
+  GNU nano 4.8                                      visualizer_node.py                                                 
 import cv2
-import message_filters
+import rclpy 
+import numpy as np
+import threading
+from rclpy.node import Node
+from cv_bridge import CvBridge
+from sensor_msgs.msg import Image
+from message_filters import Subscriber, ApproximateTimeSynchronizer
 
-
-class VisualizerNode(Node):
-    """
-    A node that subscribes to image and detection topics, draws bounding
-    boxes on the image, and displays it in a window.
-    """
-
+class Visualizer(Node):
     def __init__(self):
-        super().__init__('visualizer_node')
-
+        super().__init__("visualizer_node")
+        self.annotated_frame = None
+        self.depth_frame_colorized = None
+        self.get_logger().info("Initializing visualizer node...")
+        self.colorMap = cv2.applyColorMap(np.arange(256, dtype=np.uint8), cv2.COLORMAP_JET)
+        self.colorMap[0] = [0, 0, 0]
+        self.sub_annotated = self.create_subscription(Image, "annotated_image", self.annotated_callback, 10)
+        self.sub_depth =  self.create_subscription(Image, "depth_frame", self.depth_callback, 10)
         self.bridge = CvBridge()
-        self.get_logger().info("Visualizer node started.")
 
-        self.image_sub = message_filters.Subscriber(self, Image, 'image_raw')
-        self.detection_sub = message_filters.Subscriber(self, Detection2DArray, 'yolo_detections')
 
-        self.ts = message_filters.ApproximateTimeSynchronizer(
-            [self.image_sub, self.detection_sub],
-            queue_size=10,
-            slop=0.1
-        )
-        self.ts.registerCallback(self.synced_callback)
 
-    def synced_callback(self, image_msg: Image, detections_msg: Detection2DArray):
-        try:
-            cv_image = self.bridge.imgmsg_to_cv2(image_msg, 'bgr8')
 
-            for detection in detections_msg.detections:
-                center_x = int(detection.bbox.center.x)
-                center_y = int(detection.bbox.center.y)
+    def annotated_callback(self, msg: Image):
+        self.annotated_frame = self.bridge.imgmsg_to_cv2(msg, "bgr8")
 
-                width = int(detection.bbox.size_x)
-                height = int(detection.bbox.size_y)
 
-                x1 = center_x - width // 2
-                y1 = center_y - height // 2
-                x2 = x1 + width
-                y2 = y1 + height
-
-                cv2.rectangle(cv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-
-                # --- CORRECTED SECTION for ROS 2 Foxy ---
-                # Read from the 'id' and 'score' fields directly.
-                if detection.results:
-                    class_id = detection.results[0].id
-                    score = detection.results[0].score
-                    label = f"{class_id}: {score:.2f}"
-                    cv2.putText(cv_image, label, (x1, y1 - 10),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-                # --- END CORRECTION ---
-
-            cv2.imshow("YOLO Detections", cv_image)
-            cv2.waitKey(1)
-
-        except Exception as e:
-            self.get_logger().error(f"Error in visualizer callback: {e}")
-
+    def depth_callback(self, msg: Image):
+        self.depth_frame = self.bridge.imgmsg_to_cv2(msg, "passthrough")
+        self.depth_frame = cv2.resize(self.depth_frame, (640, 480))
+        self.depth_frame_colorized = cv2.applyColorMap(self.depth_frame, self.colorMap)
+        
+    def visualize(self): 
+        while True:
+            if self.annotated_frame is None or self.depth_frame_colorized is None:
+                continue
+            self.combined_streams = np.hstack([self.annotated_frame, self.depth_frame_colorized])
+            cv2.imshow("Combined Stream", self.combined_streams)
+            if cv2.waitKey(1) == ord("q"):
+                break  
 
 def main(args=None):
     rclpy.init(args=args)
-    visualizer_node = VisualizerNode()
+    visualizer_node = Visualizer()
+
+    vis_thread = threading.Thread(target=visualizer_node.visualize, daemon=True)
+    vis_thread.start()
+
     try:
         rclpy.spin(visualizer_node)
-    except KeyboardInterrupt:
+    except(KeyboardInterrupt, SystemExit):
         pass
+    finally:
+        visualizer_node.destroy_node()
+        rclpy.shutdown()
 
-    cv2.destroyAllWindows()
-    visualizer_node.destroy_node()
-    rclpy.shutdown()
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     main()
+
+
 
