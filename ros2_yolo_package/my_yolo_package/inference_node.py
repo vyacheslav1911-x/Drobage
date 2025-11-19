@@ -14,9 +14,9 @@ class YoloNode(Node):
     def __init__(self):
         print("Init")
         super().__init__('inference_node')
-        self.publisher = self.create_publisher(Detection2DArray, "/bb", 10)
+        self.publisher_annotated = self.create_publisher(Image, "annotated_image", 10)
         pkg_share_directory = get_package_share_directory('my_yolo_package')
-        defaults = {"model_path" : os.path.join(pkg_share_directory, "models", "yolov8>
+        defaults = {"model_path" : os.path.join(pkg_share_directory, "models", "yolov8n.pt"),
                     "conf":0.5,
                     "max_detections":1,
                     "class_detection":[47],
@@ -39,11 +39,12 @@ class YoloNode(Node):
             self.get_logger().error(f"Could not load {e}")
 
         self.subscription = self.create_subscription(Image, 
-                                                    'image_raw',
+                                                    'image_raw', 
                                                      self.image_callback,
                                                      10)
 
         self.bridge = CvBridge()
+  GNU nano 4.8                                       inference_node.py                                                 
         self.message_received = False        
 
     def image_callback(self, msg: Image):
@@ -58,6 +59,7 @@ class YoloNode(Node):
             if self.message_received:
                 self.get_logger().info("Message was received succesfully")
                 cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+                depth_frame = self.bridge.imgmsg_to_cv2(msg, "passthrough")
                 infr_rslts = self.model(source=cv_image,
                                         device = self.device,
                                         conf = self.conf, 
@@ -78,7 +80,7 @@ class YoloNode(Node):
 
                         detection_2d.results.append(hypothesis)
                         detection_2d_msg.detections.append(detection_2d)
-                    self.publisher.publish(detection_2d_msg)
+
 
                 if infr.boxes is not None and len(infr.boxes) > 0:
                     box = infr.boxes[0]
@@ -86,9 +88,15 @@ class YoloNode(Node):
                     x_center = int((x1 + x2) / 2)
                     y_center = int((y1 + y2) / 2)
                     cv2.circle(cv_image, (x_center, y_center),5, (0, 255, 0), -1)
-                    cv2.rectangle(cv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)       >
+                    cv2.rectangle(cv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+
+                annotated_image = self.bridge.cv2_to_imgmsg(cv_image, encoding = "bgr8")
+                annotated_image.header = msg.header
+                self.publisher_annotated.publish(annotated_image)
+
                 cv2.imshow("Stream", cv_image)
                 cv2.waitKey(1)
+
         except Exception as e:
             self.get_logger().error(f"An exception occured: {e}")
 
@@ -106,5 +114,7 @@ def main(args=None):
     rclpy.shutdown()
 if __name__ =='__main__':
     main()
+
+
 
                                                      
