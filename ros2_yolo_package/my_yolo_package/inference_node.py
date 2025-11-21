@@ -15,8 +15,11 @@ class YoloNode(Node):
         print("Init")
         super().__init__('inference_node')
         self.publisher_annotated = self.create_publisher(Image, "annotated_image", 10)
+        self.publisher_depth = self.create_publisher(Image, "depth_frame", 10)
+        self.publisher_detection = self.create_publisher(Detection2DArray, "detections", 10)
+
         pkg_share_directory = get_package_share_directory('my_yolo_package')
-        defaults = {"model_path" : os.path.join(pkg_share_directory, "models", "yolov8n.pt"),
+        defaults = {"model_path" : os.path.join(pkg_share_directory, "models", "yolov8n.pt">
                     "conf":0.5,
                     "max_detections":1,
                     "class_detection":[47],
@@ -43,9 +46,20 @@ class YoloNode(Node):
                                                      self.image_callback,
                                                      10)
 
+        self.subscription_depth = self.create_subscription(Image, 
+                                                           "depth_frame_to_inference",
+                                                           self.depth_callback,
+                                                           10)
+
         self.bridge = CvBridge()
-  GNU nano 4.8                                       inference_node.py                                                 
-        self.message_received = False        
+        self.message_received = False
+
+    def depth_callback(self, msg: Image):
+        self.depth_frame_inference = self.bridge.imgmsg_to_cv2(msg, "passthrough")
+        self.depth_frame = self.bridge.cv2_to_imgmsg(self.depth_frame_inference, 
+                                                     encoding = "passthrough")
+
+        self.publisher_depth.publish(self.depth_frame)
 
     def image_callback(self, msg: Image):
         print("Callback")
@@ -59,7 +73,6 @@ class YoloNode(Node):
             if self.message_received:
                 self.get_logger().info("Message was received succesfully")
                 cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-                depth_frame = self.bridge.imgmsg_to_cv2(msg, "passthrough")
                 infr_rslts = self.model(source=cv_image,
                                         device = self.device,
                                         conf = self.conf, 
@@ -72,8 +85,8 @@ class YoloNode(Node):
                         x1, y1, x2, y2 = map(int, box.xyxy[0])
                         detection_2d.bbox.center.x = ((x1 + x2) / 2)
                         detection_2d.bbox.center.y = ((y1 + y2) / 2)
-                        detection_2d.bbox.size_x =float((x2 - x1))
-                        detection_2d.bbox.size_y =float((y2 - y1))
+                        detection_2d.bbox.size_x = float((x2 - x1))
+                        detection_2d.bbox.size_y = float((y2 - y1))
 
                         hypothesis.id = str(box.cls[0].item())
                         hypothesis.score = float(box.conf[0])        
@@ -81,17 +94,17 @@ class YoloNode(Node):
                         detection_2d.results.append(hypothesis)
                         detection_2d_msg.detections.append(detection_2d)
 
-
                 if infr.boxes is not None and len(infr.boxes) > 0:
                     box = infr.boxes[0]
                     x1, y1,  x2, y2 = map(int, box.xyxy[0])
                     x_center = int((x1 + x2) / 2)
                     y_center = int((y1 + y2) / 2)
                     cv2.circle(cv_image, (x_center, y_center),5, (0, 255, 0), -1)
-                    cv2.rectangle(cv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                    cv2.rectangle(cv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)            >
 
                 annotated_image = self.bridge.cv2_to_imgmsg(cv_image, encoding = "bgr8")
                 annotated_image.header = msg.header
+                self.publisher_detection.publish(detection_2d_msg)
                 self.publisher_annotated.publish(annotated_image)
 
                 cv2.imshow("Stream", cv_image)
