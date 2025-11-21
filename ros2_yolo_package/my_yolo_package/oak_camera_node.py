@@ -17,14 +17,14 @@ class OakCameraNode(Node):
 
         cnfg_abs_path = get_package_share_directory("my_yolo_package")
         self.get_logger().info("Trying to load calibration file...")
-        jsonfile = os.path.join(cnfg_abs_path, "config", "184430101153051300_09_28_25_13_00.json")
+        jsonfile = os.path.join(cnfg_abs_path, "config", "184430101153051300_09_28_25_13_00>
         self.get_logger().info("Calibration file loaded succesfully")
 
         self.declare_parameter('video_fps', 30)
         video_fps = self.get_parameter('video_fps').get_parameter_value().integer_value
 
         self.publisher_rgb = self.create_publisher(Image, 'image_raw', 10)
-        self.publisher_depth = self.create_publisher(Image, 'depth_frame', 10)
+        self.publisher_depth = self.create_publisher(Image, 'depth_frame_to_inference', 10)
         self.bridge = CvBridge()
 
         self.get_logger().info("Configuring DepthAI pipeline...")
@@ -36,10 +36,11 @@ class OakCameraNode(Node):
         self.pipeline.setCalibrationData(calibData)
         self.intrinsics  = calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B)
         f_x = self.intrinsics[0][0]
+        print(f_x)
         B = 0.075 #meters
 
-        self.monoLeft = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
-        self.monoRight = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
+        self.monoLeft = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.C>
+        self.monoRight = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.>
         self.stereo = self.pipeline.create(dai.node.StereoDepth)
 
         self.monoLeftOut = self.monoLeft.requestFullResolutionOutput()
@@ -52,6 +53,7 @@ class OakCameraNode(Node):
         self.stereo.setLeftRightCheck(True)
         self.stereo.setRectification(True)
         self.stereo.setSubpixel(False)
+        self.stereo.setExtendedDisparity(True)
         self.stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
 
         self.syncedLeftQueue = self.stereo.syncedLeft.createOutputQueue()
@@ -88,11 +90,11 @@ class OakCameraNode(Node):
             return 
 
         if rgb_in is not None and depth_in is not None:
-            rgb_frame = rgb_in.getCvFrame()
 
+            rgb_frame = rgb_in.getCvFrame()
             self.npDisparity  = depth_in.getFrame()
             self.maxDisparity = max(self.maxDisparity, np.max(self.npDisparity))
-            normalizedDisparity = ((self.npDisparity / self.maxDisparity) * 255).astype(np.uint8)
+            normalizedDisparity = ((self.npDisparity / self.maxDisparity) * 255).astype(np.>
 
             ros_image_rgb = self.bridge.cv2_to_imgmsg(rgb_frame, "bgr8")
             ros_image_rgb.header.stamp = self.get_clock().now().to_msg()
@@ -100,7 +102,7 @@ class OakCameraNode(Node):
 
             ros_image_depth = self.bridge.cv2_to_imgmsg(normalizedDisparity, "mono8")
             ros_image_depth.header.stamp = self.get_clock().now().to_msg()
-            ros_image_depth.header.frame_id = "depth_frame"
+            ros_image_depth.header.frame_id = "depth_frame_to_inference"
 
             self.publisher_rgb.publish(ros_image_rgb)
             self.publisher_depth.publish(ros_image_depth)
@@ -128,5 +130,4 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
-
 
