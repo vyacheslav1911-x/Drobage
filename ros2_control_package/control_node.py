@@ -39,25 +39,24 @@ class PIController:
         def update(self, error_side):
             self.current_sample_side = time.monotonic()
             if self.last_sample_side is None:
-                dt = 0.05
+                dt = 0.1
             else:
                 dt = max(0.001, self.current_sample_side - self.last_sample_side)
             self.last_sample_side = self.current_sample_side
 
             self.integral_error_side += error_side * dt
             self.integral_error_side = max(-120, min(120, self.integral_error_side))
-
             control_output = self.kp_side * error_side + self.ki_side * self.integral_error_side
             return max(-255, min(255, control_output))
 
 class Control(Node):
     def __init__(self):
         super().__init__("control_node")
-        self.Kp_frwd = 400
-        self.Ki_frwd = 8
+        self.Kp_frwd = 1
+        self.Ki_frwd = 1
 
-        self.Kp_side = 1.0
-        self.Ki_side = 0.6
+        self.Kp_side = 1
+        self.Ki_side = 1
 
         self.ip = "192.168.4.1"
         self.is_moving = False
@@ -69,8 +68,8 @@ class Control(Node):
         self.distance_m = None
         self.side_error = None    
 
-        self.create_timer(0.05, self.control_loop_frwd)
-        self.create_timer(0.05, self.control_loop_side)
+        self.create_timer(0.1, self.control_loop_frwd)
+#        self.create_timer(0.05, self.control_loop_side)
 
     def forward_error_callback(self, msg):
         self.distance_m = msg.data
@@ -80,24 +79,42 @@ class Control(Node):
 
 
     def control_loop_frwd(self):
-        if self.distance_m is None:
+        if self.distance_m is None or self.side_error is None:
             return
         TARGET_DISTANCE = 0.25
         should_move = self.distance_m > TARGET_DISTANCE
-
-        if should_move:
+        control_output_side = self.side_controller.update(self.side_error)      
+        if should_move and control_output_side < 0:
             error = self.distance_m - TARGET_DISTANCE
 
-            control_output = self.frwd_controller.update(error)
-            speed = max(80, min(255, control_output))
+            control_output_frwd = self.frwd_controller.update(error)
 
-            command_move = f'{{"T":11,"L":{int(speed)},"R":{int(speed)}}}'        
+            speed = max(80, min(255, control_output_frwd))
+ 
+            command_move = f'{{"T":11,"L":{int(speed)/1.75},"R":{int(speed)/1.75 + 50*int(abs(control_output_side))}}}'  >
+            json_move = f"http://{self.ip}/js?json={command_move}"
+            try:
+            try:
+                requests.get(json_move, timeout=0.1)
+            except Exception as e:
+                print("HTTP error: ", e)
+            self.is_moving = True
+
+        if should_move and control_output_side > 0:
+            error = self.distance_m - TARGET_DISTANCE
+
+            control_output_frwd = self.frwd_controller.update(error)
+
+            speed = max(80, min(255, control_output_frwd))
+ 
+            command_move = f'{{"T":11,"L":{int(speed)+ int(abs(control_output_side))},"R":{int(speed)/1.75}}}'        
             json_move = f"http://{self.ip}/js?json={command_move}"
             try:
                 requests.get(json_move, timeout=0.1)
             except Exception as e:
                 print("HTTP error: ", e)
             self.is_moving = True
+
 
         elif not should_move and self.is_moving:
             command_stop = '{"T":11,"L":0,"R":0}'
@@ -110,36 +127,36 @@ class Control(Node):
             print("Target reached - stopping the rover")
 
         print(f"{self.distance_m:.2f}")
-
-    def control_loop_side(self):
-        if self.side_error is None:
-            return
-        control_output = self.side_controller.update(self.side_error)
-        if control_output < 0:
-            command_turn_left = f'{{"T":11,"L":0,"R":{int(abs(control_output))}}}'
-            json_turn_left = f"http://{self.ip}/js?json={command_turn_left}"
-            try:
-                requests.get(json_turn_left, timeout=0.1)
-            except Exception as e:
-                print("HTTP error: ", e)
-        elif control_output > 0:
-            command_turn_right = f'{{"T":11,"L":{control_output},"R":0}}'
-            json_turn_right = f"http://{self.ip}/js?json={command_turn_right}"
-            try:
-                requests.get(json_turn_right, timeout=0.1)
-            except Exception as e:
-                print("HTTP error: ", e)
-        elif -10 < self.side_error < 10:
-            command_stop = '{"T":11,"L":0,"R":0}'
-            json_stop =  f"http://{self.ip}/js?json={command_stop}"
-            try:
-                requests.get(json_stop, timeout=0.1)
-            except Exception as e:
-                print("HTTP error: ", e)
-
-        print(f"Side error: {self.side_error}")
-        print(f"Control output: {control_output}")
-        control_output = 0
+        print(control_output_side)
+#    def control_loop_side(self):
+#        if self.side_error is None:
+#            return
+#        control_output = self.side_controller.update(self.side_error)
+#        if control_output < 0:
+#            command_turn_left = f'{{"T":11,"L":0,"R":{int(abs(control_output))}}}'
+#            json_turn_left = f"http://{self.ip}/js?json={command_turn_left}"
+#            try:
+#                requests.get(json_turn_left, timeout=0.1)
+#            except Exception as e:
+#                print("HTTP error: ", e)
+#        elif control_output > 0:
+#            command_turn_right = f'{{"T":11,"L":{control_output},"R":0}}'
+#            json_turn_right = f"http://{self.ip}/js?json={command_turn_right}"
+#            try:
+#                requests.get(json_turn_right, timeout=0.1)
+#            except Exception as e:
+#                print("HTTP error: ", e)
+#        elif -10 < self.side_error < 10:
+#            command_stop = '{"T":11,"L":0,"R":0}'
+#            json_stop =  f"http://{self.ip}/js?json={command_stop}"
+#            try:
+#                requests.get(json_stop, timeout=0.1)
+#            except Exception as e:
+#                print("HTTP error: ", e)
+#        
+#        print(f"Side error: {self.side_error}")
+#        print(f"Control output: {control_output}")
+#        control_output = 0
 
 def main():
     rclpy.init()
@@ -154,6 +171,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
