@@ -46,7 +46,8 @@ class PIController:
                 self.dt = max(0.001, self.current_sample_side - self.last_sample_side)
             self.last_sample_side = self.current_sample_side
 
-            self.integral_error_side += error_side * self.dt            self.integral_error_side = max(-120, min(120, self.integral_error_side))
+            self.integral_error_side += error_side * self.dt            
+            self.integral_error_side = max(-120, min(120, self.integral_error_side))
             control_output = self.kp_side * error_side + self.ki_side * self.integral_error_side 
             self.prev_error = self.last_error_side if self.last_error_side is not None else 0
             self.rate_of_change = (error_side - self.prev_error) / self.dt
