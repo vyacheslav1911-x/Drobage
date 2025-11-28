@@ -1,3 +1,4 @@
+  GNU nano 4.8                                       oak_camera_node.py                                                  
 #!/usr/bin/env python3
 import depthai as dai
 import torch
@@ -17,14 +18,14 @@ class OakCameraNode(Node):
 
         cnfg_abs_path = get_package_share_directory("my_yolo_package")
         self.get_logger().info("Trying to load calibration file...")
-        jsonfile = os.path.join(cnfg_abs_path, "config", "184430101153051300_09_28_25_13_00>
+        jsonfile = os.path.join(cnfg_abs_path, "config", "184430101153051300_09_28_25_13_00.json")
         self.get_logger().info("Calibration file loaded succesfully")
 
         self.declare_parameter('video_fps', 30)
         video_fps = self.get_parameter('video_fps').get_parameter_value().integer_value
 
-        self.publisher_rgb = self.create_publisher(Image, 'image_raw', 10)
-        self.publisher_depth = self.create_publisher(Image, 'depth_frame_to_inference', 10)
+        self.publisher_rgb = self.create_publisher(Image, 'image_raw', 5)
+        self.publisher_depth = self.create_publisher(Image, 'depth_frame_to_inference', 5)
         self.bridge = CvBridge()
 
         self.get_logger().info("Configuring DepthAI pipeline...")
@@ -39,8 +40,8 @@ class OakCameraNode(Node):
         print(f_x)
         B = 0.075 #meters
 
-        self.monoLeft = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.C>
-        self.monoRight = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.>
+        self.monoLeft = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
+        self.monoRight = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
         self.stereo = self.pipeline.create(dai.node.StereoDepth)
 
         self.monoLeftOut = self.monoLeft.requestFullResolutionOutput()
@@ -56,6 +57,9 @@ class OakCameraNode(Node):
         self.stereo.setExtendedDisparity(True)
         self.stereo.setDepthAlign(dai.CameraBoardSocket.CAM_A)
 
+        self.stereo.initialConfig.postProcessing.temporalFilter.enable = False
+        self.stereo.initialConfig.postProcessing.spatialFilter.enable = True
+
         self.syncedLeftQueue = self.stereo.syncedLeft.createOutputQueue()
         self.syncedRightQueue = self.stereo.syncedRight.createOutputQueue()
         self.disparityQueue = self.stereo.disparity.createOutputQueue()
@@ -63,7 +67,7 @@ class OakCameraNode(Node):
 
         # conecting and setting the device
         try:
-            self.get_logger().info("connecting to OAK-D Lite...")
+            self.get_logger().info("Connecting to OAK-D Lite...")
             self.pipeline.start()
             self.get_logger().info("OAK-D Lite camera connected")
 
@@ -92,16 +96,17 @@ class OakCameraNode(Node):
         if rgb_in is not None and depth_in is not None:
 
             rgb_frame = rgb_in.getCvFrame()
+
             self.npDisparity  = depth_in.getFrame()
             self.maxDisparity = max(self.maxDisparity, np.max(self.npDisparity))
-            normalizedDisparity = ((self.npDisparity / self.maxDisparity) * 255).astype(np.>
+            normalizedDisparity = ((self.npDisparity / self.maxDisparity) * 255).astype(np.uint8)
 
             ros_image_rgb = self.bridge.cv2_to_imgmsg(rgb_frame, "bgr8")
-            ros_image_rgb.header.stamp = self.get_clock().now().to_msg()
+            ros_image_rgb.header.stamp = rclpy.time.Time(seconds=rgb_in.getTimestamp().total_seconds()).to_msg()
             ros_image_rgb.header.frame_id = "rgb_frame"
 
             ros_image_depth = self.bridge.cv2_to_imgmsg(normalizedDisparity, "mono8")
-            ros_image_depth.header.stamp = self.get_clock().now().to_msg()
+            ros_image_depth.header.stamp = rclpy.time.Time(seconds=depth_in.getTimestamp().total_seconds()).to_msg()
             ros_image_depth.header.frame_id = "depth_frame_to_inference"
 
             self.publisher_rgb.publish(ros_image_rgb)
@@ -130,4 +135,9 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
+
+
+
+
 
