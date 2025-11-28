@@ -14,12 +14,13 @@ class YoloNode(Node):
     def __init__(self):
         print("Init")
         super().__init__('inference_node')
-        self.publisher_annotated = self.create_publisher(Image, "annotated_image", 10)
-        self.publisher_depth = self.create_publisher(Image, "depth_frame", 10)
-        self.publisher_detection = self.create_publisher(Detection2DArray, "detections", 10)
+        self.cv_image = None
+        self.publisher_annotated = self.create_publisher(Image, "annotated_image", 5)
+        self.publisher_depth = self.create_publisher(Image, "depth_frame", 5)
+        self.publisher_detection = self.create_publisher(Detection2DArray, "detections", 5)
 
         pkg_share_directory = get_package_share_directory('my_yolo_package')
-        defaults = {"model_path" : os.path.join(pkg_share_directory, "models", "yolov8n.pt"),
+        defaults = {"model_path" : os.path.join(pkg_share_directory, "models", "yolov8n_raw.engine"),
                     "conf":0.5,
                     "max_detections":1,
                     "class_detection":[47],
@@ -41,15 +42,16 @@ class YoloNode(Node):
         except Exception as e:
             self.get_logger().error(f"Could not load {e}")
 
+
         self.subscription = self.create_subscription(Image, 
                                                     'image_raw', 
                                                      self.image_callback,
-                                                     10)
+                                                     5)
 
         self.subscription_depth = self.create_subscription(Image, 
                                                            "depth_frame_to_inference",
                                                            self.depth_callback,
-                                                           10)
+                                                           5)
 
         self.bridge = CvBridge()
         self.message_received = False
@@ -68,13 +70,12 @@ class YoloNode(Node):
         detection_2d = Detection2D()
         hypothesis = ObjectHypothesisWithPose()
         try:
-            #converting img  to np array via bridge
             self.message_received = True
             if self.message_received:
                 self.get_logger().info("Message was received succesfully")
-                cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-                infr_rslts = self.model(source=cv_image,
-                                        device = self.device,
+                self.cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
+                infr_rslts = self.model(source=self.cv_image,
+                                        device = "cuda",
                                         conf = self.conf, 
                                         classes = self.class_detection, 
                                         max_det = self.max_detections)
@@ -94,31 +95,28 @@ class YoloNode(Node):
                         detection_2d.results.append(hypothesis)
                         detection_2d_msg.detections.append(detection_2d)
 
+
                 if infr.boxes is not None and len(infr.boxes) > 0:
                     box = infr.boxes[0]
                     x1, y1,  x2, y2 = map(int, box.xyxy[0])
                     x_center = int((x1 + x2) / 2)
                     y_center = int((y1 + y2) / 2)
-                    cv2.circle(cv_image, (x_center, y_center),5, (0, 255, 0), -1)
-                    cv2.rectangle(cv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)            
+                    cv2.circle(self.cv_image, (x_center, y_center),5, (0, 255, 0), -1)
+                    cv2.rectangle(self.cv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
-                annotated_image = self.bridge.cv2_to_imgmsg(cv_image, encoding = "bgr8")
-                annotated_image.header = msg.header
+                self.annotated_image = self.bridge.cv2_to_imgmsg(self.cv_image, encoding = "bgr8")
+                self.annotated_image.header = msg.header
                 self.publisher_detection.publish(detection_2d_msg)
-                self.publisher_annotated.publish(annotated_image)
-
-                cv2.imshow("Stream", cv_image)
-                cv2.waitKey(1)
+                self.publisher_annotated.publish(self.annotated_image)
 
         except Exception as e:
             self.get_logger().error(f"An exception occured: {e}")
-
-
 
 def main(args=None):
     print("Start")
     rclpy.init(args=args)
     inference_node = YoloNode()
+
     try:
         rclpy.spin(inference_node)
     except(SystemExit, KeyboardInterrupt):
@@ -127,6 +125,8 @@ def main(args=None):
     rclpy.shutdown()
 if __name__ =='__main__':
     main()
+
+
 
 
 
