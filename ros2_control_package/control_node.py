@@ -1,3 +1,4 @@
+  GNU nano 4.8                                                             control_node.py                                                                       
 import cv2
 import rclpy
 import time
@@ -47,7 +48,7 @@ class PIController:
             self.last_sample_side = self.current_sample_side
 
             self.integral_error_side += error_side * self.dt
-           self.integral_error_side = max(-200, min(200, self.integral_error_side))
+            self.integral_error_side = max(-120, min(120, self.integral_error_side))
             control_output = self.kp_side * error_side + self.ki_side * self.integral_error_side 
             self.prev_error = self.last_error_side if self.last_error_side is not None else 0
             self.rate_of_change = (error_side - self.prev_error) / self.dt
@@ -58,12 +59,12 @@ class PIController:
 class Control(Node):
     def __init__(self):
         super().__init__("control_node")
-        self.Kp_frwd = 1.5
-        self.Ki_frwd = 1
+        self.Kp_frwd = 5
+        self.Ki_frwd = 2
 
         self.Kp_side = 0.7
         self.Ki_side = 0.5
-        self.TARGET_DISTANCE = 0.25
+        self.TARGET_DISTANCE = 0.3
 
         self.ip = "192.168.4.1"
         self.is_moving = False
@@ -107,6 +108,7 @@ class Control(Node):
                 json_frwd =  f"http://{self.ip}/js?json={command_frwd}"
             try:
                 requests.get(json_frwd, timeout=0.1)
+
             except Exception as e:
                 print("HTTP error: ", e)
         if not should_move: 
@@ -121,12 +123,23 @@ class Control(Node):
                 except Exception as e:
                     print("HTTP error: ", e)
 
+            if self.distance_m < self.TARGET_DISTANCE:
+                command_back = f'{{"T":11,"L":{-30},"R":{-30}}}'
+                json_back =  f"http://{self.ip}/js?json={command_back}"
+                try:
+                    requests.get(json_back, timeout=0.1)
+                    time.sleep(0.5)
+                except Exception as e:
+                    print("HTTP error: ", e)
+
+
             if should_turn and not self.should_stop:    
                 if control_output_side < 0:
                     command_move = f'{{"T":11,"L":{-180},"R":{180}}}'        
                     json_move = f"http://{self.ip}/js?json={command_move}"
                     try:
                         requests.get(json_move, timeout=0.1)
+
                     except Exception as e:
                         print("HTTP error: ", e)
 
@@ -135,72 +148,13 @@ class Control(Node):
                     json_move = f"http://{self.ip}/js?json={command_move}"
                     try:
                         requests.get(json_move, timeout=0.1)
+
                     except Exception as e:
                         print("HTTP error: ", e)
 
 
-
-#        elif (not should_move and self.is_moving):
-#            command_stop = '{"T":11,"L":0,"R":0}'
-#            json_stop =  f"http://{self.ip}/js?json={command_stop}"
-#            try:
-#                requests.get(json_stop, timeout=0.1)
-#            except Exception as e:
-#                print("HTTP error: ", e)
-#            self.is_moving = False
-#            self.is_stopped = True
-#            print("Target reached - stopping the rover")
-#            if self.is_stopped:
-#                print(self.rate_of_change)
-#                if (-11 < self.rate_of_change < 11) and (-5 < self.side_error < 5):
-#                    return
-#                if self.side_error < 0:
-#                    command_reverse_left = f'{{"T":11,"L":{-150},"R":{150}}}'
-#                    json_reverse_left = f"http://{self.ip}/js?json={command_reverse_left}"
-#                    try:
-#                        requests.get(json_reverse_left, timeout=0.1)
-#                    except Exception as e:
-#                        print("HTTP error: ", e)
-#                elif self.side_error > 0:
-#                    command_reverse_right = f'{{"T":11,"L":{150},"R":{-150}}}'
-#                    json_reverse_right = f"http://{self.ip}/js?json={command_reverse_right}"
-#                    try:
-#                        requests.get(json_reverse_right, timeout=0.1)
-#                    except Exception as e:
-#                        print("HTTP error: ", e)
-  
-
         print(f"Distance: {self.distance_m:.2f}")
         print(f"Side control magnitude: {control_output_side}")
-#    def control_loop_side(self):
-#        if self.side_error is None:
-#            return
-#        control_output = self.side_controller.update(self.side_error)
-#        if control_output < 0:
-#            command_turn_left = f'{{"T":11,"L":0,"R":{int(abs(control_output))}}}'
-#            json_turn_left = f"http://{self.ip}/js?json={command_turn_left}"
-#            try:
-#                requests.get(json_turn_left, timeout=0.1)
-#            except Exception as e:
-#                print("HTTP error: ", e)
-#        elif control_output > 0:
-#            command_turn_right = f'{{"T":11,"L":{control_output},"R":0}}'
-#            json_turn_right = f"http://{self.ip}/js?json={command_turn_right}"
-#            try:
-#                requests.get(json_turn_right, timeout=0.1)
-#            except Exception as e:
-#                print("HTTP error: ", e)
-#        elif -10 < self.side_error < 10:
-#            command_stop = '{"T":11,"L":0,"R":0}'
-#            json_stop =  f"http://{self.ip}/js?json={command_stop}"
-#            try:
-#                requests.get(json_stop, timeout=0.1)
-#            except Exception as e:
-#                print("HTTP error: ", e)
-#        
-#        print(f"Side error: {self.side_error}")
-#        print(f"Control output: {control_output}")
-#        control_output = 0
 
 def main():
     rclpy.init()
@@ -215,6 +169,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
 
 
 
