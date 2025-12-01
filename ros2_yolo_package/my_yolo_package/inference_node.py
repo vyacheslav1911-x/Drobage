@@ -1,5 +1,8 @@
+  GNU nano 4.8                                                            inference_node.py                                                                      
 from ultralytics import YOLO
 import rclpy
+import threading
+import time
 from rclpy.node import Node
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2DArray, Detection2D,ObjectHypothesisWithPose
@@ -112,10 +115,24 @@ class YoloNode(Node):
         except Exception as e:
             self.get_logger().error(f"An exception occured: {e}")
 
+#    def visualize(self):
+#        while rclpy.ok():
+#            if self.cv_image is None:
+#                time.sleep(0.1)
+#                continue
+            #self.combined_streams = np.hstack([self.annotated_frame, self.depth_frame_colo>
+#            cv2.imshow("Combined Stream", self.cv_image)
+
+#            if cv2.waitKey(1) == ord("q"):
+#                break  
+
+
 def main(args=None):
     print("Start")
     rclpy.init(args=args)
     inference_node = YoloNode()
+#    vis_thread = threading.Thread(target=inference_node.visualize, daemon=True)
+#    vis_thread.start()
 
     try:
         rclpy.spin(inference_node)
@@ -125,6 +142,7 @@ def main(args=None):
     rclpy.shutdown()
 if __name__ =='__main__':
     main()
+
 
 
 
