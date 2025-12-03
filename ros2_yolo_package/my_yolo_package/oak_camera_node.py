@@ -15,7 +15,7 @@ from ament_index_python.packages import get_package_share_directory
 class OakCameraNode(Node):
     def __init__(self):
         super().__init__("oak_camera_node")
-
+#get config file for camera
         cnfg_abs_path = get_package_share_directory("my_yolo_package")
         self.get_logger().info("Trying to load calibration file...")
         jsonfile = os.path.join(cnfg_abs_path, "config", "184430101153051300_09_28_25_13_00.json")
@@ -23,13 +23,13 @@ class OakCameraNode(Node):
 
         self.declare_parameter('video_fps', 30)
         video_fps = self.get_parameter('video_fps').get_parameter_value().integer_value
-
+#publishers definition
         self.publisher_rgb = self.create_publisher(Image, 'image_raw', 5)
         self.publisher_depth = self.create_publisher(Image, 'depth_frame_to_inference', 5)
         self.bridge = CvBridge()
 
         self.get_logger().info("Configuring DepthAI pipeline...")
-
+#OAK-D pipeline creation
         self.pipeline = dai.Pipeline()
         self.cam_rgb = self.pipeline.create(dai.node.Camera).build()
         self.videoQueue = self.cam_rgb.requestOutput((640, 480)).createOutputQueue()
@@ -37,7 +37,6 @@ class OakCameraNode(Node):
         self.pipeline.setCalibrationData(calibData)
         self.intrinsics  = calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B)
         f_x = self.intrinsics[0][0]
-        print(f_x)
         B = 0.075 #meters
 
         self.monoLeft = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
@@ -65,7 +64,7 @@ class OakCameraNode(Node):
         self.disparityQueue = self.stereo.disparity.createOutputQueue()
 
 
-        # conecting and setting the device
+        #Try to get the first frame
         try:
             self.get_logger().info("Connecting to OAK-D Lite...")
             self.pipeline.start()
@@ -81,11 +80,13 @@ class OakCameraNode(Node):
             rclpy.shutdown()
             return
 
-
+#timer period and timer definition
         timer_period = float(1.0 / video_fps)
         self.timer = self.create_timer(timer_period, self.time_callback)
+      
         atexit.register(self.cleanup)
         self.maxDisparity = 1
+#timer callback   
     def time_callback(self):
         rgb_in = self.videoQueue.get()
         depth_in = self.disparityQueue.get()
@@ -135,6 +136,7 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
 
 
 
