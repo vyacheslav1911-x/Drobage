@@ -1,4 +1,3 @@
-  GNU nano 4.8                                                            inference_node.py                                                                      
 from ultralytics import YOLO
 import rclpy
 import threading
@@ -18,10 +17,11 @@ class YoloNode(Node):
         print("Init")
         super().__init__('inference_node')
         self.cv_image = None
+#publishers definition
         self.publisher_annotated = self.create_publisher(Image, "annotated_image", 5)
         self.publisher_depth = self.create_publisher(Image, "depth_frame", 5)
         self.publisher_detection = self.create_publisher(Detection2DArray, "detections", 5)
-
+#get yolo model
         pkg_share_directory = get_package_share_directory('my_yolo_package')
         defaults = {"model_path" : os.path.join(pkg_share_directory, "models", "yolov8n_raw.engine"),
                     "conf":0.5,
@@ -39,13 +39,14 @@ class YoloNode(Node):
         self.max_detections = self.params["max_detections"]
         self.class_detection = self.params["class_detection"]
         self.device = self.params["device"]
+      
         try:
             self.model = YOLO(self.model_path)
             self.get_logger().info(f"{self.model} was loaded succsefully")
         except Exception as e:
             self.get_logger().error(f"Could not load {e}")
 
-
+#subscribers definition
         self.subscription = self.create_subscription(Image, 
                                                     'image_raw', 
                                                      self.image_callback,
@@ -58,7 +59,8 @@ class YoloNode(Node):
 
         self.bridge = CvBridge()
         self.message_received = False
-
+      
+#passing depth frame along to the next node in order to synchronize with rgb frame
     def depth_callback(self, msg: Image):
         self.depth_frame_inference = self.bridge.imgmsg_to_cv2(msg, "passthrough")
         self.depth_frame = self.bridge.cv2_to_imgmsg(self.depth_frame_inference, 
@@ -66,6 +68,7 @@ class YoloNode(Node):
 
         self.publisher_depth.publish(self.depth_frame)
 
+  #running inference on received rgb frame and saving to ROS msg
     def image_callback(self, msg: Image):
         print("Callback")
         detection_2d_msg = Detection2DArray()
@@ -115,24 +118,13 @@ class YoloNode(Node):
         except Exception as e:
             self.get_logger().error(f"An exception occured: {e}")
 
-#    def visualize(self):
-#        while rclpy.ok():
-#            if self.cv_image is None:
-#                time.sleep(0.1)
-#                continue
-            #self.combined_streams = np.hstack([self.annotated_frame, self.depth_frame_colo>
-#            cv2.imshow("Combined Stream", self.cv_image)
-
-#            if cv2.waitKey(1) == ord("q"):
-#                break  
+ 
 
 
 def main(args=None):
     print("Start")
     rclpy.init(args=args)
     inference_node = YoloNode()
-#    vis_thread = threading.Thread(target=inference_node.visualize, daemon=True)
-#    vis_thread.start()
 
     try:
         rclpy.spin(inference_node)
