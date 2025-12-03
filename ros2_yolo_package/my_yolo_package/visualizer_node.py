@@ -16,6 +16,7 @@ class Visualizer(Node):
         self.annotated_frame = None
         self.depth_frame_colorized = None
         self.get_logger().info("Initializing visualizer node...")
+#color map for depth frame
         self.colorMap = cv2.applyColorMap(np.arange(256, dtype=np.uint8), cv2.COLORMAP_JET)
         self.colorMap[0] = [0, 0, 0]
 
@@ -27,17 +28,20 @@ class Visualizer(Node):
         self.f_x = 457.798
         self.B = 0.075
 
+#subscribers definition
         self.sub_annotated = self.create_subscription(Image, "annotated_image", self.annotated_callback, 10)
         self.sub_depth =  self.create_subscription(Image, "depth_frame", self.depth_callback, 10)
         self.sub_detections = self.create_subscription(Detection2DArray, "detections", self.detection_callback, 10)
-
+        
+#publisher definition
         self.publisher_frwd_dist = self.create_publisher(Float32, "forward_distance", 10) 
+        
         self.create_timer(float(1/30), self.ROI_callback)       
 
         self.bridge = CvBridge()
 
 
-
+#subscribers callbacks
     def annotated_callback(self, msg: Image):
         msg.header.stamp = self.get_clock().now().to_msg()
         self.annotated_timestamp = msg.header.stamp
@@ -67,7 +71,8 @@ class Visualizer(Node):
         self.x2 = int(self.x_center + self.size_x / 2)
         self.y1 = int(self.y_center - self.size_y / 2)
         self.y2 = int(self.y_center + self.size_y / 2)
-    
+
+#calculation of distance from ROI
     def ROI_callback(self):
         self.msg = Float32() 
         if self.x1 is not None and self.y1 is not None and self.depth_frame is not None:
@@ -84,7 +89,7 @@ class Visualizer(Node):
             self.publisher_frwd_dist.publish(self.msg)
 
 
-
+#visualization in cv window as a separate thread
     def visualize(self):
         while rclpy.ok():
             if self.annotated_frame is None or self.depth_frame_colorized is None:
