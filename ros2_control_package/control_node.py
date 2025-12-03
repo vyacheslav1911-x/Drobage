@@ -1,3 +1,4 @@
+  GNU nano 4.8                                                             control_node.py                                                                       
 import cv2
 import rclpy
 import time
@@ -68,11 +69,11 @@ class PIController:
 class Control(Node):
     def __init__(self):
         super().__init__("control_node")
-        self.Kp_frwd = 34
+        self.Kp_frwd = 35
         self.Ki_frwd = 40
 
-        self.Kp_side = 2
-        self.Ki_side = 1.8
+        self.Kp_side = 1.2
+        self.Ki_side = 1.5
         self.TARGET_DISTANCE = 0.3
 
         self.ip = "192.168.4.1"
@@ -91,6 +92,7 @@ class Control(Node):
         self.previous = None
         self.distance_m = None
         self.side_error = None    
+        self.spike_lock = None       
 
         self.create_timer(0.1, self.control_loop_frwd)
 #        self.create_timer(0.05, self.control_loop_side)
@@ -109,12 +111,16 @@ class Control(Node):
         should_turn = True
         if self.distance_m is None or self.side_error is None:
             return
+        if self.spike_lock is not None and time.time() < self.spike_lock:
+            print("Going to sleep...")
+            print(f"Inside lock: {time.time()}, {self.spike_lock}")
+            return
         distance_m_prev = self.previous if self.previous is not None else 0
         if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0:
-            print("GOING TO SLEEP")
-            time.sleep(0.5)
-            print("SLEPT")
+            self.spike_lock = time.time() + 0.1
+            print(f"Inside condition: {self.spike_lock}")
             return
+
         self.previous = self.distance_m 
         should_move = self.distance_m > self.TARGET_DISTANCE + 0.03   
         control_output_side, self.rate_of_change = self.side_controller.update(self.side_error)
@@ -154,19 +160,6 @@ class Control(Node):
                 json_stop =  f"http://{self.ip}/js?json={command_stop}"
                 self.should_stop_moving = True
                 try:
-                    requests.get(json_stop, timeout=0.1)
-                except Exception as e:
-                    print("HTTP error3: ", e)
-
-            if not self.detected:
-                command_stop = '{"T":11,"L":0,"R":0}'
-                json_stop =  f"http://{self.ip}/js?json={command_stop}"
-                self.should_stop_moving = True
-                try:
-                    requests.get(json_stop, timeout=0.1)
-                except Exception as e:
-                    print("HTTP error3: ", e)
-
 
             if should_turn and not self.should_stop:
                 self.turning = True   
