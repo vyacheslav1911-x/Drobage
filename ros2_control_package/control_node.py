@@ -7,7 +7,7 @@ import math
 from rclpy.node import Node
 from cv_bridge import CvBridge
 from std_msgs.msg import Float32, Int16, Bool
-
+#PI Controller class
 class PIController:
     class Forward:
         def __init__(self, kp, ki):
@@ -69,6 +69,7 @@ class PIController:
 class Control(Node):
     def __init__(self):
         super().__init__("control_node")
+    #gains
         self.Kp_frwd = 35
         self.Ki_frwd = 40
 
@@ -77,16 +78,20 @@ class Control(Node):
         self.TARGET_DISTANCE = 0.3
 
         self.ip = "192.168.4.1"
+    #states
         self.is_moving = False
         self.should_stop = False
         self.should_stop_moving = False
         self.should_back = False
         self.turning = False
+    #class instances
         self.frwd_controller = PIController.Forward(self.Kp_frwd, self.Ki_frwd)
         self.side_controller = PIController.Side(self.Kp_side, self.Ki_side) 
+    #subscribers definition
         self.subscriber_frwd_dist = self.create_subscription(Float32, "forward_distance", self.forward_error_callback, 5)
         self.subscriber_side_error = self.create_subscription(Int16, "side_error", self.side_error_callback, 5) 
         self.subscriber_det = self.create_subscription(Bool, "detection", self.detection_callback, 5)
+    
         self.rate_of_change = None
         self.exp_decay = None       
         self.previous = None
@@ -95,8 +100,7 @@ class Control(Node):
         self.spike_lock = None       
 
         self.create_timer(0.1, self.control_loop_frwd)
-#        self.create_timer(0.05, self.control_loop_side)
-
+#subscriber callbacks
     def forward_error_callback(self, msg):
         self.distance_m = msg.data
 
@@ -106,7 +110,7 @@ class Control(Node):
     def detection_callback(self, msg):
         self.detected = msg.data
         print(self.detected)        
-
+#main control loop
     def control_loop_frwd(self):
         should_turn = True
         if self.distance_m is None or self.side_error is None:
