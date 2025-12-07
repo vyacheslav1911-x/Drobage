@@ -15,14 +15,8 @@ class PIController:
             self.integral_error = 0 
             self.last_sample = None
             self.last_error_frwd = None
-            
-        def update(self, error: float, detected: bool):
-#            self.current_sample = time.monotonic()
-#            if self.last_sample is None:
-#                dt = 0.05
-#            else:
-#                dt = max(0.001,  self.current_sample - self.last_sample)
-#            self.last_sample = self.current_sample
+
+        def update(self, error: float) -> (float, float):
             self.integral_error += error * 0.033
             self.integral_error = max(-120, min(120, self.integral_error))
             prev_error = self.last_error_frwd if self.last_error_frwd is not None else 0
@@ -43,14 +37,7 @@ class PIController:
             self.last_error_side = None
 
 
-        def update(self, error_side: float):
-#            self.current_sample_side = time.monotonic()
-#            if self.last_sample_side is None:
-#                self.dt = 0.1
-#            else:
-#                self.dt = max(0.001, self.current_sample_side - self.last_sample_side)
-#            self.last_sample_side = self.current_sample_side
-
+        def update(self, error_side: float) -> (float, float):
             self.integral_error_side += error_side * 0.033
             self.integral_error_side = max(-100, min(100, self.integral_error_side))
             control_output = self.kp_side * error_side + self.ki_side * self.integral_error_side 
@@ -58,7 +45,6 @@ class PIController:
             rate_of_change_side = (error_side - prev_error) / 0.033
             self.last_error_side = error_side 
             print(f"Derivative Side: {rate_of_change_side}")
-
             return max(-255, min(255, control_output)), rate_of_change_side
 
 class Control(Node):
@@ -75,6 +61,7 @@ class Control(Node):
 
         self.ip = "192.168.4.1"
         self.speed = None
+        self.counter = 0
 
         self.should_turn = True
         self.should_stop = False
@@ -116,14 +103,14 @@ class Control(Node):
             print("HTTP error: ", e)
 
     def lock(self) -> Bool:
-         if self.spike_lock is not None and time.time() < self.spike_lock:
+         if self.spike_lock is not None and self.counter < self.spike_lock:
              print("Going to sleep...")
-             print(f"Inside lock: {time.time()}, {self.spike_lock}")
+             self.counter = self.counter + 1
+             print(f"COUNTER: {self.counter}")
              return True
          distance_m_prev = self.previous if self.previous is not None else 0
          if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0:
-
-             self.spike_lock = time.time() + 0.01
+             self.spike_lock = 10
              print(f"Inside condition: {self.spike_lock}")
              return True           
          self.previous = self.distance_m 
@@ -132,14 +119,14 @@ class Control(Node):
     def control_loop(self):
         if self.distance_m is None or self.side_error is None:
             return
-#        if self.lock():
-#            return
+        if self.lock():
+            return
 
         should_move = self.distance_m > self.TARGET_DISTANCE + 0.03   
         control_output_side, self.rate_of_change = self.side_controller.update(self.side_error)
         if should_move and not self.turning and self.detected:
             error = self.distance_m - self.TARGET_DISTANCE
-            control_output_frwd, self.rate_of_change_frwd  = self.frwd_controller.update(error, self.detected)
+            control_output_frwd, self.rate_of_change_frwd  = self.frwd_controller.update(error)
             self.speed = max(20, min(255, control_output_frwd))
             print(f"Speed: {self.speed}")
             if control_output_side < 0:
@@ -156,9 +143,6 @@ class Control(Node):
             if -10 < self.side_error < 10:
                 self.should_stop = True
                 self.send_command(11, 0, 0)
-#            if not self.detected:
-#                print("INSIDE")
-#                self.send_command(11, 0, 0)
 
             if self.should_turn and not self.should_stop:
                 self.turning = True   
@@ -170,12 +154,11 @@ class Control(Node):
                     L_speed = 120
                     R_speed = -120
                     self.send_command(11, L_speed, R_speed)
-                               
+
             self.turning = False  
-         
+
         print(f"Distance: {self.distance_m:.2f}")
         print(f"Side control magnitude: {control_output_side}")
-#        print(f"Should stop: {self.should_stop_moving}")   
 
 def main():
     rclpy.init()
@@ -190,6 +173,9 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
 
 
 
