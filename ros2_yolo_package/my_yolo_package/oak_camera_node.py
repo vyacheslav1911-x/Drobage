@@ -1,5 +1,3 @@
-  GNU nano 4.8                                       oak_camera_node.py                                                  
-#!/usr/bin/env python3
 import depthai as dai
 import torch
 import rclpy
@@ -10,34 +8,32 @@ import numpy as np
 from cv_bridge import CvBridge
 import atexit
 import os
+import time
 from ament_index_python.packages import get_package_share_directory
 
 class OakCameraNode(Node):
     def __init__(self):
         super().__init__("oak_camera_node")
-#get config file for camera
+
         cnfg_abs_path = get_package_share_directory("my_yolo_package")
+
         self.get_logger().info("Trying to load calibration file...")
         jsonfile = os.path.join(cnfg_abs_path, "config", "184430101153051300_09_28_25_13_00.json")
         self.get_logger().info("Calibration file loaded succesfully")
 
-        self.declare_parameter('video_fps', 30)
-        video_fps = self.get_parameter('video_fps').get_parameter_value().integer_value
-#publishers definition
         self.publisher_rgb = self.create_publisher(Image, 'image_raw', 5)
         self.publisher_depth = self.create_publisher(Image, 'depth_frame_to_inference', 5)
         self.bridge = CvBridge()
 
         self.get_logger().info("Configuring DepthAI pipeline...")
-#OAK-D pipeline creation
+
         self.pipeline = dai.Pipeline()
         self.cam_rgb = self.pipeline.create(dai.node.Camera).build()
         self.videoQueue = self.cam_rgb.requestOutput((640, 480)).createOutputQueue()
+
         calibData = dai.CalibrationHandler(jsonfile)
         self.pipeline.setCalibrationData(calibData)
         self.intrinsics  = calibData.getCameraIntrinsics(dai.CameraBoardSocket.CAM_B)
-        f_x = self.intrinsics[0][0]
-        B = 0.075 #meters
 
         self.monoLeft = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_B)
         self.monoRight = self.pipeline.create(dai.node.Camera).build(dai.CameraBoardSocket.CAM_C)
@@ -61,61 +57,54 @@ class OakCameraNode(Node):
 
         self.syncedLeftQueue = self.stereo.syncedLeft.createOutputQueue()
         self.syncedRightQueue = self.stereo.syncedRight.createOutputQueue()
+
         self.disparityQueue = self.stereo.disparity.createOutputQueue()
+        self.maxDisparity = 1
 
-
-        #Try to get the first frame
         try:
             self.get_logger().info("Connecting to OAK-D Lite...")
             self.pipeline.start()
             self.get_logger().info("OAK-D Lite camera connected")
-
             self.videoIn = self.videoQueue.get()
             self.disparity = self.disparityQueue.get()
 
             assert isinstance(self.videoIn, dai.ImgFrame)
-            assert isinstance(self.disparity, dai.ImgFrame)   
+            assert isinstance(self.disparity, dai.ImgFrame)
+   
         except Exception as e:
             self.get_logger().error(f"Failed to connect to OAK-D Lite: {e}")
             rclpy.shutdown()
             return
 
-#timer period and timer definition
-        timer_period = float(1.0 / video_fps)
+
+        timer_period = float(1.0 / 30)
         self.timer = self.create_timer(timer_period, self.time_callback)
-      
+
         atexit.register(self.cleanup)
-        self.maxDisparity = 1
-#timer callback   
+
     def time_callback(self):
         rgb_in = self.videoQueue.get()
         depth_in = self.disparityQueue.get()
-        if rgb_in is None:
-            self.get_logger.info("No frame received from OAK-D")
+        if rgb_in is None and depth_in is None:
+            self.get_logger().info("No frame received from OAK-D")
             return 
 
-        if rgb_in is not None and depth_in is not None:
+        rgb_frame = rgb_in.getCvFrame()
 
-            rgb_frame = rgb_in.getCvFrame()
+        self.npDisparity  = depth_in.getFrame()
+        self.maxDisparity = max(self.maxDisparity, np.max(self.npDisparity))
+        normalizedDisparity = ((self.npDisparity / self.maxDisparity) * 255).astype(np.uint8)
 
-            self.npDisparity  = depth_in.getFrame()
-            self.maxDisparity = max(self.maxDisparity, np.max(self.npDisparity))
-            normalizedDisparity = ((self.npDisparity / self.maxDisparity) * 255).astype(np.uint8)
+        ros_image_rgb = self.bridge.cv2_to_imgmsg(rgb_frame, "bgr8")
+        ros_image_rgb.header.stamp = rclpy.time.Time(seconds=rgb_in.getTimestamp().total_seconds()).to_msg>
+        ros_image_rgb.header.frame_id = "rgb_frame"
 
-            ros_image_rgb = self.bridge.cv2_to_imgmsg(rgb_frame, "bgr8")
-            ros_image_rgb.header.stamp = rclpy.time.Time(seconds=rgb_in.getTimestamp().total_seconds()).to_msg()
-            ros_image_rgb.header.frame_id = "rgb_frame"
+        ros_image_depth = self.bridge.cv2_to_imgmsg(normalizedDisparity, "mono8")
+        ros_image_depth.header.stamp = rclpy.time.Time(seconds=depth_in.getTimestamp().total_seconds()).to>
+        ros_image_depth.header.frame_id = "depth_frame_to_inference"
 
-            ros_image_depth = self.bridge.cv2_to_imgmsg(normalizedDisparity, "mono8")
-            ros_image_depth.header.stamp = rclpy.time.Time(seconds=depth_in.getTimestamp().total_seconds()).to_msg()
-            ros_image_depth.header.frame_id = "depth_frame_to_inference"
-
-            self.publisher_rgb.publish(ros_image_rgb)
-            self.publisher_depth.publish(ros_image_depth)
-        else:
-            self.get_logger().warn("Failed to capture frame from OAK-D.")
-
-
+        self.publisher_rgb.publish(ros_image_rgb)
+        self.publisher_depth.publish(ros_image_depth)
 
     def cleanup(self):
         if hasattr(self, 'device'):
@@ -130,12 +119,12 @@ def main(args=None):
     except (SystemExit, KeyboardInterrupt):
         pass
     finally:
-
         camera_node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
+
 
 
 
