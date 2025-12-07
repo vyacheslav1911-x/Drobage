@@ -17,19 +17,21 @@ class YoloNode(Node):
         print("Init")
         super().__init__('inference_node')
         self.cv_image = None
-#publishers definition
+        self.latest_frame = None
+
         self.publisher_annotated = self.create_publisher(Image, "annotated_image", 5)
         self.publisher_depth = self.create_publisher(Image, "depth_frame", 5)
         self.publisher_detection = self.create_publisher(Detection2DArray, "detections", 5)
-#get yolo model
+  
         pkg_share_directory = get_package_share_directory('my_yolo_package')
         defaults = {"model_path" : os.path.join(pkg_share_directory, "models", "yolov8n_raw.engine"),
                     "conf":0.5,
                     "max_detections":1,
                     "class_detection":[47],
-                    "device" : '0'
+                    "device" : 'cuda'
                     }
         self.params = {}
+
         for name, value in defaults.items():
             self.declare_parameter(name, value)
             self.params[name] = self.get_parameter(name).value
@@ -39,52 +41,60 @@ class YoloNode(Node):
         self.max_detections = self.params["max_detections"]
         self.class_detection = self.params["class_detection"]
         self.device = self.params["device"]
-      
+
         try:
             self.model = YOLO(self.model_path)
             self.get_logger().info(f"{self.model} was loaded succsefully")
         except Exception as e:
             self.get_logger().error(f"Could not load {e}")
 
-#subscribers definition
-        self.subscription = self.create_subscription(Image, 
-                                                    'image_raw', 
-                                                     self.image_callback,
-                                                     5)
+        self.subscription = self.create_subscription(
+        Image, 
+        'image_raw', 
+        self.image_callback,
+        5)
 
-        self.subscription_depth = self.create_subscription(Image, 
-                                                           "depth_frame_to_inference",
-                                                           self.depth_callback,
-                                                           5)
+        self.subscription_depth = self.create_subscription(
+        Image, 
+        "depth_frame_to_inference",
+        self.depth_callback,
+        5)
 
         self.bridge = CvBridge()
         self.message_received = False
-      
-#passing depth frame along to the next node in order to synchronize with rgb frame
+
     def depth_callback(self, msg: Image):
         self.depth_frame_inference = self.bridge.imgmsg_to_cv2(msg, "passthrough")
-        self.depth_frame = self.bridge.cv2_to_imgmsg(self.depth_frame_inference, 
-                                                     encoding = "passthrough")
+        self.depth_frame = self.bridge.cv2_to_imgmsg(self.depth_frame_inference, encoding = "passthrough")
 
         self.publisher_depth.publish(self.depth_frame)
 
-  #running inference on received rgb frame and saving to ROS msg
     def image_callback(self, msg: Image):
-        print("Callback")
-        detection_2d_msg = Detection2DArray()
-        detection_2d_msg.header = msg.header
-        detection_2d = Detection2D()
-        hypothesis = ObjectHypothesisWithPose()
-        try:
-            self.message_received = True
-            if self.message_received:
+        self.latest_frame = msg
+
+
+    def processing_thread(self):
+        while rclpy.ok():
+            if self.latest_frame is None:
+                time.sleep(0.1)
+                continue
+            try:
+                detection_2d_msg = Detection2DArray()
+                detection_2d_msg.header = self.latest_frame.header
+                detection_2d = Detection2D()
+                hypothesis = ObjectHypothesisWithPose()
+
                 self.get_logger().info("Message was received succesfully")
-                self.cv_image = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-                infr_rslts = self.model(source=self.cv_image,
-                                        device = "cuda",
-                                        conf = self.conf, 
-                                        classes = self.class_detection, 
-                                        max_det = self.max_detections)
+
+                self.cv_image = self.bridge.imgmsg_to_cv2(self.latest_frame, 'bgr8')
+
+                infr_rslts = self.model(
+                source=self.cv_image,
+                device = self.device,
+                conf = self.conf, 
+                classes = self.class_detection, 
+                max_det = self.max_detections)
+
                 infr = infr_rslts[0]
                 x1 = y1 = x2 = y2 = None
                 for result in infr_rslts:
@@ -111,14 +121,13 @@ class YoloNode(Node):
                     cv2.rectangle(self.cv_image, (x1, y1), (x2, y2), (0, 255, 0), 2)
 
                 self.annotated_image = self.bridge.cv2_to_imgmsg(self.cv_image, encoding = "bgr8")
-                self.annotated_image.header = msg.header
+                self.annotated_image.header = self.latest_frame.header
+
                 self.publisher_detection.publish(detection_2d_msg)
                 self.publisher_annotated.publish(self.annotated_image)
 
-        except Exception as e:
-            self.get_logger().error(f"An exception occured: {e}")
-
- 
+            except Exception as e:
+                self.get_logger().error(f"An exception occured: {e}")
 
 
 def main(args=None):
@@ -126,14 +135,23 @@ def main(args=None):
     rclpy.init(args=args)
     inference_node = YoloNode()
 
+    process_thread = threading.Thread(target=inference_node.processing_thread, daemon=True)
+    process_thread.start()
+
     try:
         rclpy.spin(inference_node)
     except(SystemExit, KeyboardInterrupt):
         pass
-    inference_node.destroy_node()
-    rclpy.shutdown()
+    finally:
+        inference_node.destroy_node()
+        rclpy.shutdown()
+
 if __name__ =='__main__':
     main()
+
+
+
+
 
 
 
