@@ -1,3 +1,4 @@
+  GNU nano 4.8                                                           visualizer_node.py                                                                      
 import cv2
 import rclpy 
 import numpy as np
@@ -7,7 +8,7 @@ from rclpy.node import Node
 from cv_bridge import CvBridge
 from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2DArray
-from std_msgs.msg import Float32, Int16, Bool
+from std_msgs.msg import Float32, Int16, Bool, Float32MultiArray
 from message_filters import Subscriber, ApproximateTimeSynchronizer
 
 class Visualizer(Node):
@@ -39,10 +40,12 @@ class Visualizer(Node):
         self.publisher_frwd_dist = self.create_publisher(Float32, "forward_distance", 5) 
         self.publisher_err_x = self.create_publisher(Int16, "side_error", 5)        
         self.publisher_det = self.create_publisher(Bool, "detection", 5)
+        self.publisher_bb_coords = self.create_publisher(Float32MultiArray, "coords", 5)
 
         self.create_timer(float(1/30), self.ROI_callback)       
         self.create_timer(float(1/30), self.side_error_callback)
         self.create_timer(float(1/30), self.detection)
+        self.create_timer(float(1/30), self.coords)
 
         self.bridge = CvBridge()
 
@@ -74,6 +77,12 @@ class Visualizer(Node):
         self.y1 = int(self.y_center - self.size_y / 2)
         self.y2 = int(self.y_center + self.size_y / 2)
     
+    def coords(self):
+        msg = Float32MultiArray()
+        if self.x1 is not None and self.y1 is not None:
+            msg.data = list(map(float, [self.x1, self.y1, self.x2, self.y2]))
+            self.publisher_bb_coords.publish(msg)
+
     def ROI_callback(self):
         msg = Float32() 
         if self.x1 is not None and self.y1 is not None and self.depth_frame is not None:
@@ -132,6 +141,9 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
+
+
+
 
 
 
