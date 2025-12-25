@@ -3,9 +3,71 @@ import rclpy
 import time
 import requests
 import math 
+import numpy as np
 from rclpy.node import Node
 from cv_bridge import CvBridge
-from std_msgs.msg import Float32, Int16, Bool
+from std_msgs.msg import Float32, Int16, Bool, Float32MultiArray
+from filterpy.kalman import KalmanFilter
+
+class KalmanBox:
+    def __init__(self, bbox):
+        self.kf = KalmanFilter(7, 4)
+        self.kf.F = np.array(
+        [1,0,0,0,1,0,0], 
+        [0,1,0,0,0,1,0],
+        [0,0,1,0,0,0,1],
+        [0,0,0,1,0,0,0],
+        [0,0,0,0,1,0,0]
+        [0,0,0,0,0,1,0],
+        [0,0,0,0,0,0,1])
+
+        self.kf.H = np.array(
+        [1,0,0,0,0,0,0],
+        [0,1,0,0,0,0,0],
+        [0,0,1,0,0,0,0],
+        [0,0,0,1,0,0,0])
+
+        self.kf.R[:2,:2] *= 10
+        self.kf.Q[4:,4:] *= 0.01
+        self.kf.P *= 10
+        self.kf.P[4:, 4:] *= 1000
+
+        self.kf.x[:4] = self.convert_bb_to_z(bbox)
+        self.time_since_det = 0
+
+    def convert_bb_to_z(self, bbox):
+        w = bbox[2] - bbox[0]
+        h = bbox[3] - bbox[1]
+        cx = w/2
+        cy = h/2
+        s = w * h
+        r = w/h
+        z = [cx, cy, s, r]
+        return np.array(z)
+
+    def convert_x_to_bb(self, x):
+        w = np.sqrt(x[2] * x[3])
+        h = x[2]/w
+        x1_predicted = x[0] - w/2
+        y1_predicted = x[1] - h/2
+        x2_predicted = x[0] + w/2
+        y2_predicted = x[1] + h/2
+        bb_predicted = [x1_predicted, y1_predicted, x2_predicted, y2_predicted]
+        return np.array(bb_predicted).reshape((1,4))
+
+    def predict(self):
+        self.predict()
+        self.time_since_det += 1
+        return self.get_bbox()
+
+    def update(self, bbox):
+        self.update()
+        self.time_since_det = 0
+
+    def get_bbox(self):
+        return self.convert_x_to_bb(self.kf.x)[0] 
+    
+
 
 class PIController:
     class Forward:
@@ -57,7 +119,7 @@ class Control(Node):
         self.Ki_side = 0.2
 
         self.TARGET_DISTANCE = 0.3
-        self.d_dec = 0.4
+        self.d_dec = 0.35
         self.feedforward = 25
 
         self.ip = "192.168.4.1"
@@ -73,6 +135,7 @@ class Control(Node):
         self.subscriber_frwd_dist = self.create_subscription(Float32, "forward_distance", self.forward_error_callback, 5)
         self.subscriber_side_error = self.create_subscription(Int16, "side_error", self.side_error_callback, 5) 
         self.subscriber_det = self.create_subscription(Bool, "detection", self.detection_callback, 5)
+        self.subscriber_bb_coords = self.create_subscription(Float32MultiArray, "coords", self.coords_callback, 5)
 
         self.rate_of_change = None
         self.previous = None
@@ -97,6 +160,8 @@ class Control(Node):
 #            return
         print(f"DETECTED OR NOT: {self.detected}")
 
+    def coords_callback(self, msg):
+        self.bbox = msg.data[1]
 
 
     def send_command(self, T: int, L_speed: int, R_speed: int) -> None:
@@ -108,23 +173,25 @@ class Control(Node):
             print("HTTP error: ", e)
 
     def lock(self) -> Bool:
-         if self.spike_lock is not None:
-             print("Going to sleep...")
-             if self.counter < self.spike_lock:
-                 self.counter = self.counter + 1
-                 print(f"COUNTER: {self.counter}")
-                 return True
-         distance_m_prev = self.previous if self.previous is not None else 0
-         if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0:
-             self.spike_lock = 10
-             self.counter =0 
-             print(f"Inside condition: {self.spike_lock}")
-             return True
-         else:
-             self.counter = 0
-             self.spike_lock = None           
-         self.previous = self.distance_m 
-         return False
+        if self.spike_lock is not None:
+            print("Going to sleep...")
+            if self.counter < self.spike_lock:
+                self.counter = self.counter + 1
+                print(f"COUNTER: {self.counter}")
+                return True
+        distance_m_prev = self.previous if self.previous is not None else 0
+        if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0:
+            self.spike_lock = 10
+            self.counter =0 
+            print(f"Inside condition: {self.spike_lock}")
+            return True
+        else:
+            self.counter = 0
+            self.spike_lock = None           
+        self.previous = self.distance_m 
+        return False
+
+
 
     def control_loop(self):
         if self.distance_m is None or self.side_error is None:
