@@ -1,4 +1,4 @@
-import cv2
+mport cv2
 import rclpy
 import time
 import requests
@@ -50,14 +50,15 @@ class PIController:
 class Control(Node):
     def __init__(self):
         super().__init__("control_node")
-        self.Kp_frwd = 35
-        self.Ki_frwd = 40
+        self.Kp_frwd = 40
+        self.Ki_frwd = 45
 
         self.Kp_side = 0.3  #12 V
         self.Ki_side = 0.2
 
         self.TARGET_DISTANCE = 0.3
-        self.feedforward = 40
+        self.d_dec = 0.4
+        self.feedforward = 25
 
         self.ip = "192.168.4.1"
         self.speed = None
@@ -90,9 +91,13 @@ class Control(Node):
 
     def detection_callback(self, msg):
         self.detected = msg.data
-        if not self.detected:
-            self.send_command(11,0,0)
-        print(f"DETECTED OR NOT: {self.detected}")        
+#        if not self.detected:
+#            self.send_command(11,0,0)
+#        else:
+#            return
+        print(f"DETECTED OR NOT: {self.detected}")
+
+
 
     def send_command(self, T: int, L_speed: int, R_speed: int) -> None:
         json_command = f'{{"T":{T},"L":{L_speed},"R":{R_speed}}}'
@@ -103,16 +108,21 @@ class Control(Node):
             print("HTTP error: ", e)
 
     def lock(self) -> Bool:
-         if self.spike_lock is not None and self.counter < self.spike_lock:
+         if self.spike_lock is not None:
              print("Going to sleep...")
-             self.counter = self.counter + 1
-             print(f"COUNTER: {self.counter}")
-             return True
+             if self.counter < self.spike_lock:
+                 self.counter = self.counter + 1
+                 print(f"COUNTER: {self.counter}")
+                 return True
          distance_m_prev = self.previous if self.previous is not None else 0
          if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0:
              self.spike_lock = 10
+             self.counter =0 
              print(f"Inside condition: {self.spike_lock}")
-             return True           
+             return True
+         else:
+             self.counter = 0
+             self.spike_lock = None           
          self.previous = self.distance_m 
          return False
 
@@ -124,11 +134,15 @@ class Control(Node):
 
         should_move = self.distance_m > self.TARGET_DISTANCE + 0.03   
         control_output_side, self.rate_of_change = self.side_controller.update(self.side_error)
+
         if should_move and not self.turning and self.detected:
             error = self.distance_m - self.TARGET_DISTANCE
             control_output_frwd, self.rate_of_change_frwd  = self.frwd_controller.update(error)
             self.speed = max(20, min(255, control_output_frwd))
-            print(f"Speed: {self.speed}")
+            print(f"SPEED: {self.speed}")
+            if error <= self.d_dec:
+                self.speed *= error/self.d_dec
+
             if control_output_side < 0:
                  L_speed = self.speed + self.feedforward
                  R_speed = self.speed + self.feedforward
@@ -142,7 +156,7 @@ class Control(Node):
                 self.should_stop = False
             if -10 < self.side_error < 10:
                 self.should_stop = True
-                self.send_command(11, 0, 0)
+               # self.send_command(11, 0, 0)
 
             if self.should_turn and not self.should_stop:
                 self.turning = True   
@@ -158,7 +172,7 @@ class Control(Node):
             self.turning = False  
 
         print(f"Distance: {self.distance_m:.2f}")
-        print(f"Side control magnitude: {control_output_side}")
+        print(f"Side control magnitude: {control_output_side}")   
 
 def main():
     rclpy.init()
@@ -173,6 +187,8 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
