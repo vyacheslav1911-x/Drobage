@@ -1,4 +1,3 @@
-  GNU nano 4.8                                                           visualizer_node.py                                                                      
 import cv2
 import rclpy 
 import numpy as np
@@ -10,6 +9,67 @@ from sensor_msgs.msg import Image
 from vision_msgs.msg import Detection2DArray
 from std_msgs.msg import Float32, Int16, Bool, Float32MultiArray
 from message_filters import Subscriber, ApproximateTimeSynchronizer
+from filterpy.kalman import KalmanFilter
+
+class KalmanBox:
+    def __init__(self, bbox):
+        self.kf = KalmanFilter(7, 4)
+        self.kf.F = np.array(
+        [[1,0,0,0,1,0,0], 
+        [0,1,0,0,0,1,0],
+        [0,0,1,0,0,0,1],
+        [0,0,0,1,0,0,0],
+        [0,0,0,0,1,0,0],
+        [0,0,0,0,0,1,0],
+        [0,0,0,0,0,0,1]])
+
+        self.kf.H = np.array(
+        [[1,0,0,0,0,0,0],
+        [0,1,0,0,0,0,0],
+        [0,0,1,0,0,0,0],
+        [0,0,0,1,0,0,0]])
+
+        self.kf.R[:2,:2] *= 10
+        self.kf.Q *= 0.001
+        self.kf.Q[4:,4:] *= 0.00001
+        self.kf.P *= 10
+        self.kf.P[4:, 4:] *= 10
+
+        self.kf.x[:4] = self.convert_bb_to_z(bbox)
+        self.time_since_det = 0
+
+    def convert_bb_to_z(self, bbox):
+        w = bbox[2] - bbox[0]
+        h = bbox[3] - bbox[1]
+        cx = bbox[0] + w/2
+        cy = bbox[1] + h/2
+        s = w * h
+        r = w/h
+        z = [cx, cy, s, r]
+        return np.array(z).reshape((4,1))
+
+    def convert_x_to_bb(self, x):
+        w = np.sqrt(x[2] * x[3])
+        h = x[2]/w
+        self.x1_predicted = x[0] - w/2
+        self.y1_predicted = x[1] - h/2
+        self.x2_predicted = x[0] + w/2
+        self.y2_predicted = x[1] + h/2
+        bb_predicted = [self.x1_predicted, self.y1_predicted, self.x2_predicted, self.y2_predicted]
+        return np.array(bb_predicted).reshape((1,4))
+
+    def predict(self):
+        self.kf.predict()
+        self.time_since_det += 1
+        return self.get_bbox()
+
+    def update(self, bbox):
+        self.kf.update(self.convert_bb_to_z(bbox))
+        self.time_since_det = 0
+
+    def get_bbox(self):
+        return self.convert_x_to_bb(self.kf.x)[0] 
+
 
 class Visualizer(Node):
     def __init__(self):
@@ -23,6 +83,9 @@ class Visualizer(Node):
         self.colorMap[0] = [0, 0, 0]
         self.image_center = (320, 240)
 
+        self.tracker = None
+        self.bbox = None
+        self.bbox_predicted = None
         self.bb_center = None    
         self.x1 = None
         self.x2 = None
@@ -45,7 +108,7 @@ class Visualizer(Node):
         self.create_timer(float(1/30), self.ROI_callback)       
         self.create_timer(float(1/30), self.side_error_callback)
         self.create_timer(float(1/30), self.detection)
-        self.create_timer(float(1/30), self.coords)
+        self.create_timer(float(1/30), self.tracking_loop)
 
         self.bridge = CvBridge()
 
@@ -76,25 +139,41 @@ class Visualizer(Node):
         self.x2 = int(self.x_center + self.size_x / 2)
         self.y1 = int(self.y_center - self.size_y / 2)
         self.y2 = int(self.y_center + self.size_y / 2)
-    
-    def coords(self):
-        msg = Float32MultiArray()
-        if self.x1 is not None and self.y1 is not None:
-            msg.data = list(map(float, [self.x1, self.y1, self.x2, self.y2]))
-            self.publisher_bb_coords.publish(msg)
+        self.bbox = [self.x1, self.y1, self.x2, self.y2]
+
+    def tracking_loop(self):
+        if self.bbox is None:
+            return
+        if self.tracker is None and self.bbox is not None:
+            self.tracker = KalmanBox(self.bbox)
+
+        if self.detected:
+            self.tracker.update(self.bbox)
+        self.tracker.predict()
+        self.bbox_predicted = self.tracker.get_bbox()
+        print(f"PREDICTED: {self.bbox_predicted}")
+        print(f"ACTUAL: {self.bbox}")
 
     def ROI_callback(self):
         msg = Float32() 
-        if self.x1 is not None and self.y1 is not None and self.depth_frame is not None:
-            self.region = self.depth_frame[int(self.y1-(self.y1*0.05)):int(self.y2-(self.y2*0.05)), self.x1:self.x2]
-            self.valid_pixels = self.region[self.region > 0]
-            self.disparity_value = np.mean(self.valid_pixels)
-            if self.disparity_value < 0.1:
-                self.disparity_value = 0.1
-            self.distance_m = (self.f_x * self.B) / self.disparity_value
-            print(f"{self.distance_m:.2f}")
-            msg.data = round(self.distance_m, 2)
-            self.publisher_frwd_dist.publish(msg)
+        if not self.detected and self.bbox is None:
+            return
+        if self.x1 is not None and self.y1 is not None and self.depth_frame is not None and self.detected:
+                      self.region = self.depth_frame[int(self.y1-(self.y1*0.05)):int(self.y2-(self.y2*0.05)), self.x1:self.x2]
+        elif not self.detected and self.bbox_predicted is not None:
+            x1, y1, x2, y2, = self.bbox_predicted
+            if np.isnan([x1, y1, x2, y2]).any():
+                return
+            self.region = self.depth_frame[int(self.bbox_predicted[1]-(self.bbox_predicted[1]*0.05)):int(self.bbox_predicted[3]-(self.bbox_predicted[3]*0.05)), >
+        self.valid_pixels = self.region[self.region > 0]
+        self.disparity_value = np.mean(self.valid_pixels)
+        if self.disparity_value < 0.1:
+            self.disparity_value = 0.1
+        self.distance_m = (self.f_x * self.B) / self.disparity_value
+        print(f"{self.distance_m:.2f}")
+        msg.data = round(self.distance_m, 2)
+        print(msg)
+        self.publisher_frwd_dist.publish(msg)
 
 
    
@@ -141,8 +220,6 @@ def main(args=None):
 
 if __name__ == "__main__":
     main()
-
-
 
 
 
