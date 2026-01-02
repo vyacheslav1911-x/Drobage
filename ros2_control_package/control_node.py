@@ -1,4 +1,4 @@
-import cv2
+mport cv2
 import rclpy
 import time
 import requests
@@ -60,6 +60,7 @@ class Control(Node):
         self.TARGET_DISTANCE = 0.3
         self.d_dec = 0.34
         self.feedforward = 25
+        self.detection_count = 0
 
         self.ip = "192.168.4.1"
         self.speed = None
@@ -68,13 +69,15 @@ class Control(Node):
         self.should_turn = True
         self.should_stop = False
         self.turning = False
+        self.done = False
 
         self.frwd_controller = PIController.Forward(self.Kp_frwd, self.Ki_frwd)
         self.side_controller = PIController.Side(self.Kp_side, self.Ki_side) 
-        self.subscriber_frwd_dist = self.create_subscription(Float32, "forward_distance", self.forward_error_callback, 5)
-        self.subscriber_side_error = self.create_subscription(Int16, "side_error", self.side_error_callback, 5) 
+        self.subscriber_frwd_dist = self.create_subscription(Float32, "forward_distance", self.forward_err>
+        self.subscriber_side_error = self.create_subscription(Int16, "side_error", self.side_error_callbac>
         self.subscriber_det = self.create_subscription(Bool, "detection", self.detection_callback, 5)
 
+        self.publisher_stop = self.create_publisher(Bool, "stop_state", 5)
 
         self.rate_of_change = None
         self.rate_of_change_frwd = None
@@ -85,6 +88,7 @@ class Control(Node):
         self.spike_lock = None       
 
         self.create_timer(0.033, self.control_loop)
+        self.create_timer(0.033, self.first_detection)
 
     def forward_error_callback(self, msg):
         self.distance_m = msg.data
@@ -94,6 +98,8 @@ class Control(Node):
 
     def detection_callback(self, msg):
         self.detected = msg.data
+        if self.detection_count == 0 and not self.detected:
+            self.send_command(11, 70, 70)
         print(f"DETECTED OR NOT: {self.detected}")
 
 
@@ -104,6 +110,10 @@ class Control(Node):
             requests.get(json_send, timeout=0.1)
         except Exception as e:
             print("HTTP error: ", e)
+
+    def first_detection(self) -> None:
+        if self.detected:
+            self.detection_count += 1
 
     def lock(self) -> Bool: 
         if self.spike_lock is not None:
@@ -119,7 +129,7 @@ class Control(Node):
         self.derivative = self.rate_of_change_frwd
         print(self.derivative)
         distance_m_prev = self.previous if self.previous is not None else 0
-        if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0 or (self.derivative is not None and abs(self.derivative) > 1):
+        if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0 or (self.derivative is not None>
 
             self.spike_lock = 10
             self.counter = 0 
@@ -141,8 +151,12 @@ class Control(Node):
     def control_loop(self):
         if self.distance_m is None or self.side_error is None:
             return
-
-        should_move = self.distance_m > self.TARGET_DISTANCE + 0.03   
+        if self.detected:
+            self.detection_count += 1        
+        should_move = self.distance_m > self.TARGET_DISTANCE + 0.03
+        msg = Bool()
+        msg.data = should_move
+        self.publisher_stop.publish(msg)   
         control_output_side, self.rate_of_change = self.side_controller.update(self.side_error)
 
         if should_move and not self.turning:
@@ -153,7 +167,7 @@ class Control(Node):
             print(f"FRWD DERIVATIVE:{self.rate_of_change_frwd}")
             self.speed = max(20, min(90, control_output_frwd))
             print(f"SPEED: {self.speed}")
-          if self.distance_m <= self.d_dec or self.rate_of_change_frwd > 1:
+            if self.distance_m <= self.d_dec or self.rate_of_change_frwd > 1:
                 #self.speed *= error/self.d_dec
                  self.speed = 0
 
@@ -165,13 +179,31 @@ class Control(Node):
                  R_speed = self.speed + self.feedforward
             self.send_command(11, L_speed, R_speed)
 
+#        if 0.37 <= self.distance_m <= 0.45 and self.detected and not self.should_stop:
+
+#            if abs(self.side_error) > 10:
+#                self.should_stop = False
+#            if -30 < self.side_error < 30:
+               # self.done = True
+#                self.should_stop = True
+#            if self.should_turn and not self.should_stop:
+#                self.turning = True   
+#                if control_output_side < 0:
+#                    L_speed = -100
+#                    R_speed = 100
+#                    self.send_command(11, L_speed, R_speed)
+#                if control_output_side > 0:
+#                    L_speed = 100
+#                    R_speed = -100
+#                    self.send_command(11, L_speed, R_speed)
+#            self.turning = False
+
         if not should_move and self.detected:
 
             if abs(self.side_error) > 10:
                 self.should_stop = False
             if -10 < self.side_error < 10:
                 self.should_stop = True
-               # self.send_command(11, 0, 0)
 
             if self.should_turn and not self.should_stop:
                 self.turning = True   
@@ -202,6 +234,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
