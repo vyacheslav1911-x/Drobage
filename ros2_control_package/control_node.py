@@ -61,10 +61,12 @@ class Control(Node):
         self.d_dec = 0.34
         self.feedforward = 25
         self.detection_count = 0
+        self.confidence = 0
 
         self.ip = "192.168.4.1"
         self.speed = None
         self.counter = 0
+        self.lock_counter = 0
 
         self.should_turn = True
         self.should_stop = False
@@ -95,7 +97,7 @@ class Control(Node):
 
     def side_error_callback(self, msg):
         self.side_error = msg.data
-
+        print(self.side_error)
     def detection_callback(self, msg):
         self.detected = msg.data
         if self.detection_count == 0 and not self.detected:
@@ -131,7 +133,7 @@ class Control(Node):
         distance_m_prev = self.previous if self.previous is not None else 0
         if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0 or (self.derivative is not None and abs(self.derivative) > 1):
 
-            self.spike_lock = 10
+            self.spike_lock = 8
             self.counter = 0 
             print(self.distance_m)
             print(distance_m_prev)
@@ -149,10 +151,16 @@ class Control(Node):
 
 
     def control_loop(self):
-        if self.distance_m is None or self.side_error is None:
+        print(self.turning, self.should_stop)
+        if self.distance_m is None or self.side_error is None or self.lock_counter > 100:
             return
-        if self.detected:
-            self.detection_count += 1        
+        if self.detected and not self.lock():
+            self.confidence += 0.05
+            self.detection_count += 1       
+            self.lock_counter = 0
+        if not self.detected or self.lock():
+            self.confidence -= 0.01
+        print(f"CONFIDENCE: {self.confidence}")  
         should_move = self.distance_m > self.TARGET_DISTANCE + 0.03
         msg = Bool()
         msg.data = should_move
@@ -163,6 +171,7 @@ class Control(Node):
             error = self.distance_m - self.TARGET_DISTANCE
             control_output_frwd, self.rate_of_change_frwd  = self.frwd_controller.update(error)
             if self.lock():
+                self.lock_counter += 1
                 return
             print(f"FRWD DERIVATIVE:{self.rate_of_change_frwd}")
             self.speed = max(20, min(90, control_output_frwd))
@@ -179,9 +188,10 @@ class Control(Node):
             self.send_command(11, L_speed, R_speed)
 
         if self.detected and not self.should_stop:
+            print(f"SIDE ERROR:{self.side_error}")
 
-            if abs(self.side_error) > 10:
-                self.should_stop = False
+           # if abs(self.side_error) > 30:
+           #     self.should_stop = False
             if -30 < self.side_error < 30:
                 self.should_stop = True
             if self.should_turn and not self.should_stop:
@@ -196,6 +206,7 @@ class Control(Node):
                     self.send_command(11, L_speed, R_speed)
         if self.should_stop:  
             self.turning = False
+            print(self.turning)
 
         if not should_move and self.detected:
 
@@ -233,6 +244,10 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
 
 
 
