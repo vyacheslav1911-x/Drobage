@@ -1,4 +1,3 @@
-  GNU nano 4.8                                                             control_node.py                                                                       
 import cv2
 import rclpy
 import time
