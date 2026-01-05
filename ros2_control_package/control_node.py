@@ -1,3 +1,4 @@
+  GNU nano 4.8                                                             control_node.py                                                                       
 import cv2
 import rclpy
 import time
@@ -68,10 +69,17 @@ class Control(Node):
         self.counter = 0
         self.lock_counter = 0
 
+        self.left_counter_search = 0
+        self.right_counter_search = 0
+        self.center_counter_search = 0 
+        self.search_counter = 0
+
         self.should_turn = True
         self.should_stop = False
         self.turning = False
         self.done = False
+        self.search_mode = False
+        self.approach_mode = False
 
         self.frwd_controller = PIController.Forward(self.Kp_frwd, self.Ki_frwd)
         self.side_controller = PIController.Side(self.Kp_side, self.Ki_side) 
@@ -98,9 +106,11 @@ class Control(Node):
     def side_error_callback(self, msg):
         self.side_error = msg.data
         print(self.side_error)
+
     def detection_callback(self, msg):
         self.detected = msg.data
         if self.detection_count == 0 and not self.detected:
+            self.approach_mode = True
             self.send_command(11, 70, 70)
         print(f"DETECTED OR NOT: {self.detected}")
 
@@ -133,7 +143,7 @@ class Control(Node):
         distance_m_prev = self.previous if self.previous is not None else 0
         if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0 or (self.derivative is not None and abs(self.derivative) > 1):
 
-            self.spike_lock = 8
+            self.spike_lock = 7
             self.counter = 0 
             print(self.distance_m)
             print(distance_m_prev)
@@ -148,13 +158,34 @@ class Control(Node):
         print(distance_m_prev) 
         return False
 
-
-
     def control_loop(self):
+        if self.search_mode and not self.approach_mode:
+           # if self.search_counter < 3:
+            if self.left_counter_search < 60:
+                self.send_command(11, -100, 100)
+                self.left_counter_search += 1
+            if self.left_counter_search == 60:
+                if self.right_counter_search <= 120:
+                    self.send_command(11, 100, -100)  
+                    self.right_counter_search += 1
+            if self.right_counter_search == 120:
+                if self.center_counter_search < 60:
+                    self.send_command(11, -100, 100)
+                    self.center_counter_search += 1
+                self.search_counter += 1
+            #if self.search_counter == 3 and not self.detected:
+            #    self.send_command(11, 0, 0)
+            print(self.left_counter_search)  
         print(self.turning, self.should_stop)
-        if self.distance_m is None or self.side_error is None or self.lock_counter > 100:
+        if self.distance_m is None or self.side_error is None:
             return
+        if self.lock_counter > 100:
+            self.search_mode = True
+        if abs(self.side_error) > 30:
+            self.should_stop = False
+#            return
         if self.detected and not self.lock():
+            self.approach_mode = False
             self.confidence += 0.05
             self.detection_count += 1       
             self.lock_counter = 0
@@ -167,7 +198,7 @@ class Control(Node):
         self.publisher_stop.publish(msg)   
         control_output_side, self.rate_of_change = self.side_controller.update(self.side_error)
 
-        if should_move and not self.turning:
+        if should_move and not self.turning and not self.search_mode:
             error = self.distance_m - self.TARGET_DISTANCE
             control_output_frwd, self.rate_of_change_frwd  = self.frwd_controller.update(error)
             if self.lock():
@@ -244,6 +275,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
+
+
 
 
 
