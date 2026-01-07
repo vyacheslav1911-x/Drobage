@@ -17,11 +17,11 @@ class PIController:
             self.last_sample = None
             self.last_error_frwd = None
 
-        def update(self, error: float) -> (float, float):
+        def update(self, error: float, dt:float) -> (float, float):
             self.integral_error += error * 0.033
             self.integral_error = max(-120, min(120, self.integral_error))
             prev_error = self.last_error_frwd if self.last_error_frwd is not None else 0
-            rate_of_change_frwd = (error - prev_error) / 0.033
+            rate_of_change_frwd = (error - prev_error) / dt
             self.last_error_frwd = error
             control_output = self.kp*error + self.ki * self.integral_error
             print(f"Integral Error Forward: {self.integral_error}")
@@ -38,12 +38,12 @@ class PIController:
             self.last_error_side = None
 
 
-        def update(self, error_side: float) -> (float, float):
-            self.integral_error_side += error_side * 0.033
+        def update(self, error_side: float, dt: float) -> (float, float):
+            self.integral_error_side += error_side * dt
             self.integral_error_side = max(-100, min(100, self.integral_error_side))
             control_output = self.kp_side * error_side + self.ki_side * self.integral_error_side 
             prev_error = self.last_error_side if self.last_error_side is not None else 0
-            rate_of_change_side = (error_side - prev_error) / 0.033
+            rate_of_change_side = (error_side - prev_error) / dt
             self.last_error_side = error_side 
             print(f"Derivative Side: {rate_of_change_side}")
             return max(-255, min(255, control_output)), rate_of_change_side
@@ -76,11 +76,15 @@ class Control(Node):
         self.speed = None
         self.counter = 0
         self.lock_counter = 0
+        self.stuck = 0
 
         self.left_counter_search = 0
         self.right_counter_search = 0
         self.center_counter_search = 0 
         self.search_counter = 0
+
+        self.dt = 0.033
+        self.last_time = 0
 
         self.should_turn = True
         self.should_stop = False
@@ -114,6 +118,7 @@ class Control(Node):
 
     def side_error_callback(self, msg):
         self.side_error = msg.data
+        self.side_error = min(-320, max(self.side_error, 320))
         print(self.side_error)
 
     def detection_callback(self, msg):
@@ -146,29 +151,41 @@ class Control(Node):
             self.lock_counter += 1
             self.state = States.LOCKED
 
+        if self.state == States.LOCKED:
+            self.stuck += 1
+  
+        if self.state == States.MOVING:
+            if self.confidence < 2:
+                self.state = States.SEARCH
+
+
+        if self.stuck > 300:
+            self.state = States.SEARCH           
+
         if self.lock_counter > 100:
             self.search_mode = True
 
-        if self.detected and not self.lock():
+        if self.detected:
             self.approach_mode = False
             self.confidence += 0.05
             self.detection_count += 1       
             self.lock_counter = 0
+            self.stuck = 0
 
-        if not self.detected or self.lock():
-            self.confidence -= 0.01
+        if not self.detected:
+            self.confidence -= 0.02
         if self.approach_mode:
             self.state = States.APPROACH
-        if self.was_locked and not self.detected:
-            self.state = States.SEARCH        
         should_move = self.distance_m > self.TARGET_DISTANCE + 0.03
-        self.control_output_side, self.rate_of_change = self.side_controller.update(self.side_error)
+        self.control_output_side, self.rate_of_change = self.side_controller.update(self.side_error, self.dt)
         if abs(self.side_error) > 30:
             self.should_stop = False
         if self.should_stop:
             self.turning = False      
         if should_move and not self.turning and not self.search_mode:
             self.state = States.MOVING
+        if self.confidence < 2 and not self.approach_mode:
+            self.state = States.SEARCH
 
         if self.detected and not self.should_stop and not self.lock() or not should_move and self.detected and not self.lock():
             self.state = States.CENTERING
@@ -177,7 +194,6 @@ class Control(Node):
     def lock(self) -> Bool: 
         if self.spike_lock is not None:
             print("Going to sleep...")
-            self.send_command(11, 0, 0)
             if self.counter < self.spike_lock:
                 self.counter = self.counter + 1
                 self.send_command(11, 0, 0)
@@ -211,19 +227,15 @@ class Control(Node):
 
     def moving(self):
         error = self.distance_m - self.TARGET_DISTANCE
-        control_output_frwd, self.rate_of_change_frwd  = self.frwd_controller.update(error)
+        control_output_frwd, self.rate_of_change_frwd  = self.frwd_controller.update(error, self.dt)
         print(f"FRWD DERIVATIVE:{self.rate_of_change_frwd}")
         self.speed = max(20, min(90, control_output_frwd))
         print(f"SPEED: {self.speed}")
         if self.distance_m <= self.d_dec or self.rate_of_change_frwd > 1:
             self.speed = 0
 
-        #if self.control_output_side < 0:
         L_speed = self.speed + self.feedforward
         R_speed = self.speed + self.feedforward
-        #elif self.control_output_side > 0:
-        #    L_speed = self.speed + self.feedforward
-        #    R_speed = self.speed + self.feedforward
         self.send_command(11, L_speed, R_speed)
 
 
@@ -244,7 +256,7 @@ class Control(Node):
 
     def centering(self):   
         print(f"SIDE ERROR:{self.side_error}")
-        control_output_side, self.rate_of_change = self.side_controller.update(self.side_error)
+        control_output_side, self.rate_of_change = self.side_controller.update(self.side_error, self.dt)
 
         if -30 < self.side_error < 30:
             self.should_stop = True
@@ -260,9 +272,13 @@ class Control(Node):
                 self.send_command(11, L_speed, R_speed)
 
     def control_loop(self):
+         now = time.monotonic()
+         self.dt = now - self.last_time
+         self.last_time = now
          if self.distance_m is None or self.side_error is None:
              return
          print(f"LOCK COUNTR:{self.lock_counter}")
+         print(self.confidence)
          print(self.state)
          self.update_state()
          if self.state == States.LOCKED:
@@ -288,4 +304,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+
 
