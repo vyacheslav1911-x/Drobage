@@ -1,3 +1,20 @@
+"""
+ROS 2 node for PI-based robot motion control.
+
+This node:
+- Subscribes to forward distance, lateral error, and detection signals
+- Implements a finite-state machine (APPROACH, MOVING, CENTERING, SEARCH, LOCKED)
+- Uses PI controllers to compute forward speed and lateral alignment
+- Sends motor commands to the robot via HTTP
+- Handles safety locking if sudden changes or spikes are detected
+- Maintains confidence counters and search routines when the target is lost
+
+Subscribed topics:
+- forward_distance (std_msgs/Float32)
+- side_error (std_msgs/Int16)
+- detection (std_msgs/Bool)
+"""
+
 import rclpy
 import time
 import requests
@@ -266,6 +283,10 @@ class Control(Node):
     def lock(self) -> Bool:
         """
         Lock the robot if safety conditions are exceeded
+
+        This method:
+        - Detects disparity spikes and high rate of change of the robot
+        - If any of above true, locks the robot for a specified period
         """
         if self.spike_lock is not None:
             print("Going to sleep...")
