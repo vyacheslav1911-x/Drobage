@@ -32,7 +32,7 @@ class OakCameraNode(Node):
     disparity frames, converts them to ROS Image messages, and publishes
     them at approximately 30 FPS.
     """
-    def __init__(self):
+    def __init__(self) -> None:
         """
         Initialize the OAK-D camera node.
 
@@ -112,7 +112,7 @@ class OakCameraNode(Node):
 
         atexit.register(self.cleanup)
 
-    def time_callback(self):
+    def time_callback(self) -> None:
         """
         Timer callback that publishes RGB and depth images.
 
@@ -145,12 +145,13 @@ class OakCameraNode(Node):
         self.publisher_rgb.publish(ros_image_rgb)
         self.publisher_depth.publish(ros_image_depth)
 
-    def cleanup(self):
+    def cleanup(self) -> None:
+        """Release hardware resources before shutdown."""
         if hasattr(self, 'device'):
             self.device.close()
             self.get_logger().info("OAK-D device closed.")
     
-def main(args=None):
+def main(args=None) -> None:
     """
     ROS2 node entry point
     """
@@ -166,6 +167,7 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
 
 
 
