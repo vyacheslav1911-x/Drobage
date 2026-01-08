@@ -327,7 +327,9 @@ class Visualizer(Node):
         """
         Compute forward distance using disparity in ROI and publish
 
-        Uses detected box if available, otherwise predicted box
+        This method:
+        - Uses detected box if available, otherwise predicted box
+        - Calculates distance from ROI imposed on depth image
         """
         msg = Float32() 
         if not self.detected and self.bbox is None:
@@ -366,6 +368,10 @@ class Visualizer(Node):
     def side_error_callback(self) -> None:
         """
         Calculate lateral error and publish
+
+        This method:
+        - If detection is present, sends lateral error to the next node
+        - If no detections, sends predicted distance from KalmanBox.Side method
         """
         msg = Int16()
         if self.bb_center is None:
