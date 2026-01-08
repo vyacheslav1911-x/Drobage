@@ -1,3 +1,23 @@
+"""
+ROS 2 node for running YOLOv8 inference on incoming images.
+
+This node:
+- Subscribes to RGB images and depth frames
+- Runs YOLOv8 inference using Ultralytics
+- Publishes annotated images
+- Publishes 2D object detections as vision_msgs/Detection2DArray
+- Passes depth frames to the next node
+
+Subscribed topics:
+- image_raw (sensor_msgs/Image)
+- depth_frame_to_inference (sensor_msgs/Image)
+
+Published topics:
+- annotated_image (sensor_msgs/Image)
+- depth_frame (sensor_msgs/Image)
+- detections (vision_msgs/Detection2DArray)
+"""
+
 from ultralytics import YOLO
 import rclpy
 import threading
@@ -13,7 +33,22 @@ import os
 from ament_index_python.packages import get_package_share_directory
 
 class YoloNode(Node):
-    def __init__(self):
+    """
+    ROS 2 node that performs YOLOv8 inference on incoming RGB images.
+
+    The node receives RGB images, runs object detection using a TensorRT
+    YOLOv8 model, publishes annotated images, republishes depth images form previous node and outputs detections using
+    standard ROS vision messages.
+    """
+    def __init__(self) -> None:
+        """
+        Initialize the YOLO inference node.
+
+        This method:
+        - Declares and loads ROS parameters
+        - Loads the YOLOv8 model defaults
+        - Creates publishers and subscribers
+        """
         print("Init")
         super().__init__('inference_node')
         self.cv_image = None
@@ -63,17 +98,40 @@ class YoloNode(Node):
         self.bridge = CvBridge()
         self.message_received = False
 
-    def depth_callback(self, msg: Image):
+    def depth_callback(self, msg: Image) -> None:
+        """
+        Receive and republish depth frames.
+
+        The depth image is converted to OpenCV format and immediately
+        republished without modification. This allows downstream nodes
+        to synchronize depth with detections.
+        """
         self.depth_frame_inference = self.bridge.imgmsg_to_cv2(msg, "passthrough")
         self.depth_frame = self.bridge.cv2_to_imgmsg(self.depth_frame_inference, encoding = "passthrough")
 
         self.publisher_depth.publish(self.depth_frame)
 
-    def image_callback(self, msg: Image):
+    def image_callback(self, msg: Image) -> None:
+        """
+        Store the most recent RGB image for inference.
+
+        The image is not processed directly in the callback to avoid
+        blocking the ROS executor. Inference is handled in a separate
+        processing thread.
+        """
         self.latest_frame = msg
 
 
-    def processing_thread(self):
+    def processing_thread(self) -> None:
+        """
+        Perform YOLO inference in a background thread.
+
+        This method:
+        - Waits for incoming images
+        - Runs YOLOv8 inference
+        - Publishes Detection2DArray messages
+        - Publishes annotated images with bounding boxes
+        """
         while rclpy.ok():
             if self.latest_frame is None:
                 time.sleep(0.1)
@@ -130,7 +188,10 @@ class YoloNode(Node):
                 self.get_logger().error(f"An exception occured: {e}")
 
 
-def main(args=None):
+def main(args=None) -> None:
+    """
+    ROS2 node entry point
+    """
     print("Start")
     rclpy.init(args=args)
     inference_node = YoloNode()
