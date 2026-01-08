@@ -1,3 +1,16 @@
+"""
+ROS 2 node for configuration of the pipeline of OAK-D Lite camera and publishing of RGB and depth frames.
+
+This node configures a DepthAI pipeline to:
+- Get RGB and depth frames from queue
+- Apply filters 
+- Normalize disparity for visualization
+- Publish both streams as ROS Image messages
+
+Published topics:
+- image_raw (sensor_msgs/Image, BGR8)
+- depth_frame_to_inference (sensor_msgs/Image, mono8)
+"""
 import depthai as dai
 import torch
 import rclpy
@@ -12,7 +25,24 @@ import time
 from ament_index_python.packages import get_package_share_directory
 
 class OakCameraNode(Node):
+    """
+    ROS 2 node that streams RGB and depth images from an OAK-D Lite camera.
+
+    The node initializes a DepthAI pipeline, retrieves RGB and stereo
+    disparity frames, converts them to ROS Image messages, and publishes
+    them at approximately 30 FPS.
+    """
     def __init__(self):
+        """
+        Initialize the OAK-D camera node.
+
+        This method:
+        - Loads camera calibration data
+        - Creates ROS publishers
+        - Configures the DepthAI pipeline
+        - Retrieves first RGB and stereo disparity frames        
+        - Starts a periodic timer callback
+        """
         super().__init__("oak_camera_node")
 
         cnfg_abs_path = get_package_share_directory("my_yolo_package")
@@ -83,6 +113,15 @@ class OakCameraNode(Node):
         atexit.register(self.cleanup)
 
     def time_callback(self):
+        """
+        Timer callback that publishes RGB and depth images.
+
+        This method:
+        - Retrieves frames from DepthAI output queues
+        - Normalizes disparity values for visualization
+        - Converts frames to ROS Image messages
+        - Publishes them on their respective topics
+        """
         rgb_in = self.videoQueue.get()
         depth_in = self.disparityQueue.get()
         if rgb_in is None and depth_in is None:
@@ -112,6 +151,9 @@ class OakCameraNode(Node):
             self.get_logger().info("OAK-D device closed.")
     
 def main(args=None):
+    """
+    ROS2 node entry point
+    """
     rclpy.init(args=args)
     camera_node = OakCameraNode()
     try:
@@ -124,6 +166,7 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
 
 
 
