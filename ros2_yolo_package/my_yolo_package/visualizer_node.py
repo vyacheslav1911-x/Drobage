@@ -56,7 +56,7 @@ class KalmanBox:
         Velocity components (vx, vy, vs) are currently modeled but
         NOT actively USED by any node. They are kept for future motion modeling.
         """    
-        def __init__(self, bbox: List[int]) -> None:
+        def __init__(self, bbox: [int, int, int, int]) -> None:
             """
             Initialize the forward Kalman filter.
 
@@ -88,7 +88,7 @@ class KalmanBox:
             self.kf.x[:4] = self.convert_bb_to_z(bbox)
             self.time_since_det = 0
 
-        def convert_bb_to_z(self, bbox: List[int]) -> np.ndarray:
+        def convert_bb_to_z(self, bbox: [int, int, int, int]) -> np.ndarray:
             """
             Convert bounding box to measurement vector.
 
@@ -137,7 +137,7 @@ class KalmanBox:
             self.time_since_det += 1
             return self.get_bbox()
 
-        def update(self, bbox: List[int]) -> None:
+        def update(self, bbox: [int, int, int, int]) -> None:
             """
             Update the filter using a detected bounding box.
 
