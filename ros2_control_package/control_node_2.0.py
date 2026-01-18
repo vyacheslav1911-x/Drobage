@@ -1,20 +1,3 @@
-"""
-ROS 2 node for PI-based robot motion control.
-
-This node:
-- Subscribes to forward distance, lateral error, and detection signals
-- Implements a finite-state machine (APPROACH, MOVING, CENTERING, SEARCH, LOCKED)
-- Uses PI controllers to compute forward speed and lateral alignment
-- Sends motor commands to the robot via HTTP
-- Handles safety locking if sudden changes or spikes are detected
-- Maintains confidence counters and search routines when the target is lost
-
-Subscribed topics:
-- forward_distance (std_msgs/Float32)
-- side_error (std_msgs/Int16)
-- detection (std_msgs/Bool)
-"""
-
 import rclpy
 import time
 import requests
@@ -26,17 +9,7 @@ from std_msgs.msg import Float32, Int16, Bool, Float32MultiArray
 from enum import Enum, auto
 
 class PIController:
-    """
-    Collection of PI controllers used for robot motion control.
-    """
     class Forward:
-        """
-        Forward PI controller for distance regulation
-
-        IMPORTANT:
-        rate_of_change i.e derivative term is computed, but not used in control algortihm itself,
-        however it is used in lock() method in order to lock the robot when derivative is higher than expected
-        """
         def __init__(self, kp: float, ki: float):
             self.kp = kp
             self.ki = ki
@@ -45,17 +18,7 @@ class PIController:
             self.last_error_frwd = None
 
         def update(self, error: float, dt:float) -> (float, float):
-            """
-            Update forward PI controller.
-
-            Args:
-                error: Distance error (meters)
-                dt: Time step (seconds)
-
-            Returns:
-                Tuple(control_output, rate_of_change_frwd)
-            """
-            self.integral_error += error * 0.033
+            self.integral_error += error * dt
             self.integral_error = max(-120, min(120, self.integral_error))
             prev_error = self.last_error_frwd if self.last_error_frwd is not None else 0
             rate_of_change_frwd = (error - prev_error) / dt
@@ -67,13 +30,6 @@ class PIController:
             return max(-255, min(255, control_output)), rate_of_change_frwd
     
     class Side:
-        """
-        Lateral PI controller for centering on the object
-
-        IMPORTANT:
-        rate_of_change i.e derivative term is computed, but not used in control algortihm itself.
-        It is preserved for future extension to PID control.
-        """
         def __init__(self, kp_side: float, ki_side: float):
             self.kp_side = kp_side
             self.ki_side = ki_side
@@ -83,16 +39,6 @@ class PIController:
 
 
         def update(self, error_side: float, dt: float) -> (float, float):
-            """
-            Update lateral PI controller.
-
-            Args:
-                error_side: Distance error (pixels)
-                dt: Time step (seconds)
-
-            Returns:
-                Tuple(control_output, rate_of_change_side)
-            """
             self.integral_error_side += error_side * dt
             self.integral_error_side = max(-100, min(100, self.integral_error_side))
             control_output = self.kp_side * error_side + self.ki_side * self.integral_error_side 
@@ -104,26 +50,15 @@ class PIController:
 
 
 class States(Enum):
-    """
-    Enumeration of states
-    """
     APPROACH = auto()
     MOVING = auto()
     CENTERING = auto()
     SEARCH = auto()
     LOCKED = auto()
+    STOP = auto()
 
 class Control(Node):
-    """
-    Main robot control node.
-
-    Implements a finite-state machine using distance, lateral error,
-    and detection confidence.
-    """
-    def __init__(self) -> None:
-        """
-        Initialization of subscribers, class instances, timers
-        """
+    def __init__(self):
         super().__init__("control_node")
         self.Kp_frwd = 40
         self.Ki_frwd = 45
@@ -159,6 +94,7 @@ class Control(Node):
         self.search_mode = False
         self.approach_mode = False
         self.was_locked = False
+        self.stop_all = False
 
         self.state = States.APPROACH
 
@@ -179,24 +115,15 @@ class Control(Node):
         self.create_timer(0.033, self.control_loop)
         self.create_timer(0.033, self.first_detection)
 
-    def forward_error_callback(self, msg) -> None:
-        """
-        Receive forward distance to the object(meters)
-        """
+    def forward_error_callback(self, msg):
         self.distance_m = msg.data
 
-    def side_error_callback(self, msg) -> None:
-        """
-        Receive lateral error(pixels)
-        """
+    def side_error_callback(self, msg):
         self.side_error = msg.data
-        self.side_error = min(-320, max(self.side_error, 320))
+        self.side_error = max(-320, min(self.side_error, 320))
         print(self.side_error)
 
-    def detection_callback(self, msg) -> None:
-        """
-        Receive detection state(Bool)
-        """
+    def detection_callback(self, msg):
         self.detected = msg.data
         if self.detection_count == 0 and not self.detected:
             print(self.detection_count)
@@ -207,14 +134,6 @@ class Control(Node):
 
 
     def send_command(self, T: int, L_speed: int, R_speed: int) -> None:
-        """
-        Send motor command via HTTP
-
-        Args:
-            T: Command type
-            L: Left motor speed
-            R: Right motor speed
-        """
         json_command = f'{{"T":{T},"L":{L_speed},"R":{R_speed}}}'
         json_send =  f"http://{self.ip}/js?json={json_command}"
         try:
@@ -223,71 +142,59 @@ class Control(Node):
             print("HTTP error: ", e)
 
     def first_detection(self) -> None:
-        """
-        Check for first detection
-        """
         if self.detected:
             self.detection_count += 1
 
-    def update_state(self) -> None:
-        """
-        Update FSM based on certain conditions
-        """
+    def update_state(self):
         if self.search_mode and not self.approach_mode:
             self.state = States.SEARCH
-
+ 
         if self.lock():
             self.lock_counter += 1
             self.state = States.LOCKED
 
         if self.state == States.LOCKED:
-            self.stuck += 1
-  
-        if self.state == States.MOVING:
-            if self.confidence < 2:
-                self.state = States.SEARCH
-
-
-        if self.stuck > 300:
-            self.state = States.SEARCH           
-
-        if self.lock_counter > 100:
+            self.stuck += 1  
+ 
+        if self.stuck > 150:
+            self.search_mode = True
+        if self.lock_counter > 30:
             self.search_mode = True
 
         if self.detected:
             self.approach_mode = False
-            self.confidence += 0.05
+            self.search_mode = False
             self.detection_count += 1       
             self.lock_counter = 0
             self.stuck = 0
 
-        if not self.detected:
-            self.confidence -= 0.02
         if self.approach_mode:
             self.state = States.APPROACH
         should_move = self.distance_m > self.TARGET_DISTANCE + 0.03
         self.control_output_side, self.rate_of_change = self.side_controller.update(self.side_error, self.dt)
         if abs(self.side_error) > 30:
             self.should_stop = False
+#        if self.should_stop and should_move and not self.detected and not self.stop_all:
+#            self.approach_mode = True
         if self.should_stop:
             self.turning = False      
-        if should_move and not self.turning and not self.search_mode:
-            self.state = States.MOVING
-        if self.confidence < 2 and not self.approach_mode:
-            self.state = States.SEARCH
+#        if should_move and not self.turning and self.detected:
+#            self.stop_all = False
+#            self.state = States.MOVING
 
-        if self.detected and not self.should_stop and not self.lock() or not should_move and self.detected and not self.lock():
+        if self.detected and not self.should_stop or not should_move and self.detected and not self.lock():
             self.state = States.CENTERING
+        if not should_move and self.should_stop:
+            self.state = States.STOP
+            self.stop_all  = True
+        if self.stop_all and not self.detected or self.stop_all and self.detected:
+            self.state = States.STOP
+        if should_move and not self.turning and self.detected:
+            self.stop_all = False
+            self.state = States.MOVING
 
 
-    def lock(self) -> Bool:
-        """
-        Lock the robot if safety conditions are exceeded
-
-        This method:
-        - Detects disparity spikes and high rate of change of the robot
-        - If any of above true, locks the robot for a specified period
-        """
+    def lock(self) -> Bool: 
         if self.spike_lock is not None:
             print("Going to sleep...")
             if self.counter < self.spike_lock:
@@ -300,8 +207,7 @@ class Control(Node):
         self.derivative = self.rate_of_change_frwd
         print(self.derivative)
         distance_m_prev = self.previous if self.previous is not None else 0
-        if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0 or (self.derivative is not None and abs(self.derivative) > 1):
-            self.was_locked = True
+        if self.distance_m > distance_m_prev*1.25 and distance_m_prev != 0  or (self.derivative is not None and abs(self.derivative) > 1):
             self.spike_lock = 10
             self.counter = 0 
             print(self.distance_m)
@@ -315,22 +221,17 @@ class Control(Node):
         self.previous = self.distance_m
         print(self.distance_m)
         print(distance_m_prev) 
-        self.was_locked = False
         return False
 
-    def approach(self) -> None:
-        """
-        Blind approach to the object when 0 detections have been yet
-        """
+    def approach(self):
         self.send_command(11, 70, 70)
 
-    def moving(self) -> None:
-        """
-        Move towards the object when bb is present
-        """
+    def moving(self):
         error = self.distance_m - self.TARGET_DISTANCE
         control_output_frwd, self.rate_of_change_frwd  = self.frwd_controller.update(error, self.dt)
         print(f"FRWD DERIVATIVE:{self.rate_of_change_frwd}")
+        if self.stop_all:
+            control_output_frwd = 20  
         self.speed = max(20, min(90, control_output_frwd))
         print(f"SPEED: {self.speed}")
         if self.distance_m <= self.d_dec or self.rate_of_change_frwd > 1:
@@ -341,10 +242,7 @@ class Control(Node):
         self.send_command(11, L_speed, R_speed)
 
 
-    def search(self) -> None:
-        """
-        Look for the object if it has been lsot for a long time
-        """
+    def search(self):
         if self.left_counter_search < 60:
             self.send_command(11, -100, 100)
             self.left_counter_search += 1
@@ -359,10 +257,7 @@ class Control(Node):
 
             print(self.left_counter_search) 
 
-    def centering(self) -> None:
-        """
-        Align if lateral error is higher than 30
-        """
+    def centering(self):   
         print(f"SIDE ERROR:{self.side_error}")
         control_output_side, self.rate_of_change = self.side_controller.update(self.side_error, self.dt)
 
@@ -379,10 +274,10 @@ class Control(Node):
                 R_speed = -100
                 self.send_command(11, L_speed, R_speed)
 
-    def control_loop(self) -> None:
-         """
-         Main control loop
-         """
+    def stop(self):
+         self.send_command(11, 0, 0)
+
+    def control_loop(self):
          now = time.monotonic()
          self.dt = now - self.last_time
          self.last_time = now
@@ -402,10 +297,9 @@ class Control(Node):
              self.search()
          elif self.state == States.CENTERING:
              self.centering()
-def main() -> None:
-    """
-    ROS2 node entry point
-    """
+         elif self.state == States.STOP:
+             self.stop()
+def main():
     rclpy.init()
     control_node = Control()
     try:
@@ -418,6 +312,8 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
 
 
 
