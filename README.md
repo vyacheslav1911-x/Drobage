@@ -6,7 +6,7 @@
 This repository contains a control framework for a vision-guided mobile robot.  
 At the current stage, the project focuses on designing, implementing, and evaluating a modular control system that enables a wheeled robot to reliably track the object, successfully coping with external disturbances.
 
-The system follows a **model-based and modular robotics approach**, combining perception outputs with classical control strategies. While the current implementation relies on deterministic control logic, the framework is designed to support future extensions toward learning-based methods.
+The system combines perception outputs with classical control strategies. While the current implementation relies on deterministic control logic, the framework is designed to support future extensions toward learning-based methods.
 
 ---
 ## Aim of the Project
