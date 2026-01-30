@@ -42,7 +42,7 @@ graph TD
 
 ```
 
-* Camera Node - Initializes hardware interfaces to capture and synchronize RGB and Depth image streams. It serves as the primary data source for the perception pipeline
-* Inference Node - receives the RGB and depth frames from Camera Node and runs inference on RGB frame.
-* Visualizer Node - Responsible for data processing and the user interface. It extracts the Region of Interest (RoI) from depth maps to calculate spatial coordinates. To ensure data reliability, it uses dual Kalman filters for distance approximation and implements a gating mechanism to filter out disparity spikes
-* Control Node - Acts as the system's decision-maker. It processes lateral and forward distance errors through PI controllers to generate movement commands. The node manages the robot's behavior through a quasi-state machine (including Search, Approach, and Centering modes) to ensure precise navigation and task execution.
+* **Camera Node** - Initializes hardware interfaces to capture and synchronize RGB and Depth image streams. It serves as the primary data source for the perception pipeline
+* **Inference Node** - receives the RGB and depth frames from Camera Node and runs inference on RGB frame.
+* **Visualizer Node** - Responsible for data processing and the user interface. It extracts the Region of Interest (RoI) from depth maps to calculate spatial coordinates. To ensure data reliability, it uses dual Kalman filters for distance approximation and implements a gating mechanism to filter out disparity spikes
+*  **Control Node** - Acts as the system's decision-maker. It processes lateral and forward distance errors through PI controllers to generate movement commands. The node manages the robot's behavior through a quasi-state machine (including Search, Approach, and Centering modes) to ensure precise navigation and task execution.
