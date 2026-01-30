@@ -1,3 +1,18 @@
+
+"""
+ROS 2 node for robot motion control using PI controllers and state-based logic.
+
+This node:
+- Subscribes to forward distance, side error, and detection flags
+- Implements forward and lateral PI controllers
+- Maintains internal state machine for robot behaviors (approach, move, search, center, lock, stop)
+- Sends motion commands to the robot via HTTP requests
+
+Subscribed topics:
+- forward_distance (std_msgs/Float32)
+- side_error (std_msgs/Int16)
+- detection (std_msgs/Bool)
+"""
 import rclpy
 import time
 import requests
@@ -9,6 +24,9 @@ from std_msgs.msg import Float32, Int16, Bool, Float32MultiArray
 from enum import Enum, auto
 
 class PIController:
+    """
+    Implements simple PI controllers for forward and lateral (side) control.
+    """
     class Forward:
         def __init__(self, kp: float, ki: float):
             self.kp = kp
@@ -18,6 +36,9 @@ class PIController:
             self.last_error_frwd = None
 
         def update(self, error: float, dt:float) -> (float, float):
+            """
+            Update the controller with current error and dt.
+            """
             self.integral_error += error * dt
             self.integral_error = max(-120, min(120, self.integral_error))
             prev_error = self.last_error_frwd if self.last_error_frwd is not None else 0
@@ -39,6 +60,9 @@ class PIController:
 
 
         def update(self, error_side: float, dt: float) -> (float, float):
+            """
+            Update the controller with lateral error and timestep.
+            """
             self.integral_error_side += error_side * dt
             self.integral_error_side = max(-100, min(100, self.integral_error_side))
             control_output = self.kp_side * error_side + self.ki_side * self.integral_error_side 
@@ -50,6 +74,9 @@ class PIController:
 
 
 class States(Enum):
+    """
+    Enum for different robot states.
+    """
     APPROACH = auto()
     MOVING = auto()
     CENTERING = auto()
@@ -58,6 +85,11 @@ class States(Enum):
     STOP = auto()
 
 class Control(Node):
+    """
+    ROS 2 node that performs motion control using forward and side PI controllers.
+
+    Maintains an internal state machine and sends speed commands to a robot via HTTP requests.
+    """
     def __init__(self):
         super().__init__("control_node")
         self.Kp_frwd = 40
@@ -134,6 +166,9 @@ class Control(Node):
 
 
     def send_command(self, T: int, L_speed: int, R_speed: int) -> None:
+        """
+        Send speed command to robot via HTTP request.
+        """
         json_command = f'{{"T":{T},"L":{L_speed},"R":{R_speed}}}'
         json_send =  f"http://{self.ip}/js?json={json_command}"
         try:
@@ -142,10 +177,17 @@ class Control(Node):
             print("HTTP error: ", e)
 
     def first_detection(self) -> None:
+        """
+        Increment first detection count if an object is detected.
+        """
         if self.detected:
             self.detection_count += 1
 
     def update_state(self):
+        """
+        Update the robot's internal state machine based on detection,
+        forward distance, and side error.
+        """
         if self.search_mode and not self.approach_mode:
             self.state = States.SEARCH
  
@@ -195,6 +237,9 @@ class Control(Node):
 
 
     def lock(self) -> Bool: 
+        """
+        Detect spikes in distance or excessive derivative and lock motion if necessary.(Most likely will be removed)
+        """
         if self.spike_lock is not None:
             print("Going to sleep...")
             if self.counter < self.spike_lock:
@@ -278,6 +323,9 @@ class Control(Node):
          self.send_command(11, 0, 0)
 
     def control_loop(self):
+        """
+        Main control loop executed at 30 Hz.
+        """
          now = time.monotonic()
          self.dt = now - self.last_time
          self.last_time = now
