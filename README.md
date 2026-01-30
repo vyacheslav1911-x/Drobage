@@ -4,30 +4,29 @@
 ## Overview
 
 This repository contains a control framework for a vision-guided mobile robot.  
-The project focuses on designing, implementing, and evaluating a modular control system that enables a wheeled robot to perceive its environment, estimate relative target position, and generate motion commands in real time.
+At the current stage, the project focuses on designing, implementing, and evaluating a modular control system that enables a wheeled robot to reliably track the object, successfully coping with external disturbances.
 
 The system follows a **model-based and modular robotics approach**, combining perception outputs with classical control strategies. While the current implementation relies on deterministic control logic, the framework is designed to support future extensions toward learning-based methods.
 
 ---
-
 ## Aim of the Project
-
-The primary aim of this project is to develop a **reliable and interpretable control architecture** for a mobile robot operating based on visual feedback.
+The primary aim of this project is to develop a **reliable and interpretable control architecture** for a mobile robot operation whose main goal is to track the object and collect it using robotic arm based on visual feedback.
 
 The project specifically aims to:
-- Bridge perception and control in a real-time robotics system
-- Validate control strategies using simulation and real hardware
-- Provide a baseline system suitable for further research and learning-based extensions
+- Bridge perception and control
+- Develop real-time operation with minimal latency
+- Make mobile robot and robotic arm work as a single body
+- Provide a baseline system suitable for further research and learning-based extensions such imitation learning
 
 ---
 
 ## Project Goals
 
 The main goals of the project are:
-- Design a modular control system for a wheeled mobile robot
+- Design a modular control system for a wheeled mobile robot and robotic arm
 - Use vision-based measurements (distance and lateral offset) as control inputs
 - Implement closed-loop control using classical control methods
-- Handle perception uncertainty and transient failures
+- Handle perception uncertainty and extenral disturbances
 - Ensure real-time feasibility and debuggability
 - Establish a foundation for future imitation or policy learning
 
@@ -35,4 +34,12 @@ The main goals of the project are:
 
 ## General System Architecture
 
-The system follows a layered architecture commonly used in mobile robotics:
+The system follows a following architecture(in terms of ROS2 nodes):
+    Camera Node
+            ↓
+    Inference Node
+            ↓
+    Visualizer Node
+            ↓
+    Control Node
+
