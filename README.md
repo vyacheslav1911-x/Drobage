@@ -34,12 +34,8 @@ The main goals of the project are:
 
 ## General System Architecture
 
-The system follows a following architecture(in terms of ROS2 nodes):
-    Camera Node  
-                  ↓  
-    Inference Node  
-                  ↓  
-    Visualizer Node  
-                  ↓  
-    Control Node  
-
+```mermaid
+graph TD
+    A[Camera Node] --> B[Inference Node]
+    B --> C[Visualizer Node]
+    C --> D[Control Node]
