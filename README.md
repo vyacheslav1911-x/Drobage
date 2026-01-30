@@ -36,10 +36,10 @@ The main goals of the project are:
 
 The system follows a following architecture(in terms of ROS2 nodes):
     Camera Node  
-                ↓  
+                  ↓  
     Inference Node  
-                ↓  
+                  ↓  
     Visualizer Node  
-                ↓  
+                  ↓  
     Control Node  
 
