@@ -58,7 +58,7 @@ git clone https://github.com/vyacheslav1911-x/Drobage.git
 ```
 In case you don't ROS2 on your system, follow the instructions here -> https://docs.ros.org/en/humble/Installation/Ubuntu-Install-Debs.html. 
 
-In order to make the cloned repo executable ROS2 workspace with packages, run the follwoing commands:
+To make the cloned repo executable ROS2 workspace with packages, run the follwoing commands:
 
 Head to repo's directory
 
