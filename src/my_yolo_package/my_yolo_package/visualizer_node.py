@@ -120,11 +120,11 @@ class Visualizer(Node):
         self.publisher_meas_invalid = self.create_publisher(Bool, "meas_invalid", 5)
         self.publisher_recovery = self.create_publisher(Bool, "recovery", 5)
 
-        self.create_timer(float(1/10), self.ROI_callback)       
-        self.create_timer(float(1/10), self.side_error_callback)
-        self.create_timer(float(1/10), self.detection)
-        self.create_timer(float(1/10), self.tracking_loop)
-        self.create_timer(float(1/10), self.side_tracking_loop)
+        self.create_timer(float(1/30), self.ROI_callback)       
+        self.create_timer(float(1/30), self.side_error_callback)
+        self.create_timer(float(1/30), self.detection)
+        self.create_timer(float(1/30), self.tracking_loop)
+        self.create_timer(float(1/30), self.side_tracking_loop)
 
         self.bridge = CvBridge()
 
