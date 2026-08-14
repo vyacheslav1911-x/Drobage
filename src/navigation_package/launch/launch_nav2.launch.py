@@ -11,22 +11,22 @@ def generate_launch_description():
     planner_node = Node(
        package='nav2_planner',
        executable='planner_server',
-       arguments=['--ros-args', '--params-file', '/home/wb/Desktop/Drobage/src/navigation_package/share/config/nav2_params.yaml'])
+       arguments=['--ros-args', '--params-file', '/home/wb/Desktop/Drobage/src/navigation_package/share/config/nav2_demo_params.yaml'])
 
     controller_node = Node(
        package='nav2_controller',
        executable='controller_server',
-       arguments=['--ros-args', '--params-file', '/home/wb/Desktop/Drobage/src/navigation_package/share/config/nav2_params.yaml'])
+       arguments=['--ros-args', '--params-file', '/home/wb/Desktop/Drobage/src/navigation_package/share/config/nav2_demo_params.yaml'])
 
     navigator_node = Node(
        package='nav2_bt_navigator',
        executable='bt_navigator',
-       arguments=['--ros-args', '--params-file', '/home/wb/Desktop/Drobage/src/navigation_package/share/config/nav2_params.yaml'])
+       arguments=['--ros-args', '--params-file', '/home/wb/Desktop/Drobage/src/navigation_package/share/config/nav2_demo_params.yaml'])
 
     behaviors_node = Node(
        package='nav2_behaviors',
        executable='behavior_server',
-       arguments=['--ros-args', '--params-file', '/home/wb/Desktop/Drobage/src/navigation_package/share/config/nav2_params.yaml'])
+       arguments=['--ros-args', '--params-file', '/home/wb/Desktop/Drobage/src/navigation_package/share/config/nav2_demo_params.yaml'])
 
 #    lifecycle_node = Node(
 #       package='nav2_lifecycle_manager',

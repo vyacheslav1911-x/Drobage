@@ -1,152 +1,92 @@
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Imu, Image
-from tf_transformations import quaternion_from_euler
-import json
-import requests
-import math
-import transforms3d as tf3d
-from nav_msgs.msg import Odometry
-import time
-from geometry_msgs.msg import Quaternion
+from sensor_msgs.msg import Imu, MagneticField
+import sys
 
-class OdomNode(Node):
+from adafruit_extended_bus import ExtendedI2C as I2C
+from adafruit_bno08x.i2c import BNO08X_I2C
+from adafruit_bno08x import (
+    BNO_REPORT_ACCELEROMETER,
+    BNO_REPORT_GYROSCOPE,
+    BNO_REPORT_MAGNETOMETER,
+    BNO_REPORT_ROTATION_VECTOR
+)
+
+class BNO08XNode(Node):
     def __init__(self):
-        super().__init__("odom_node")
-        self.publisher_odom = self.create_publisher(Odometry, "odom", 5)
-        self.create_timer(float(1/10), self.odom_callback)
-        self.session = requests.Session()
-#        self.imu = Imu()
-        self.odom = Odometry()
-        self.x = 0.0
-        self.y = 0.0
-        self.theta = 0.0
+        super().__init__('imu_node')
 
-        self.last_time = time.time()
+        self.imu_pub = self.create_publisher(Imu, 'imu/data', 10)
+        self.mag_pub = self.create_publisher(MagneticField, 'imu/mag', 10)
 
-        # Wheel parameters
-        self.wheel_base = 0.23  # meters
-        self.left_wheel_speed = 0.0  # m/s
-        self.right_wheel_speed = 0.0   
-        self.subscription = self.create_subscription(
-        Image, 
-        'image_depth', 
-        self.depth_callback,
-        5)   
+        self.get_logger().info("Initializing BNO08X on I2C Bus 1...")
+        try:
+            self.i2c = I2C(1)
+            self.bno = BNO08X_I2C(self.i2c, address=0x4a)
 
-    def depth_callback(self, msg: Image):
-        self.timestamp = msg.header.stamp
+            self.bno.enable_feature(BNO_REPORT_ACCELEROMETER)
+            self.bno.enable_feature(BNO_REPORT_GYROSCOPE)
+            self.bno.enable_feature(BNO_REPORT_MAGNETOMETER)
+            self.bno.enable_feature(BNO_REPORT_ROTATION_VECTOR)
 
-        self.odom.header.stamp = self.timestamp
-        print(self.timestamp)
+            self.get_logger().info("BNO08X Initialized Successfully! Publishing data")
+        except Exception as e:
+            self.get_logger().error(f"Failed to initialize BNO08X: {e}")
+            sys.exit(1)
 
+        self.timer = self.create_timer(0.05, self.publish_data)
 
-    def odom_callback(self):
-        now = time.time()
-        dt = now - self.last_time
-        self.last_time = now 
-        odom = self.session.get("http://192.168.4.1/js?json={\"T\":126}")        
-        data = odom.json()
-        if data is None:
-            return
-        print(data)
+    def publish_data(self):
+        try:
+            accel_x, accel_y, accel_z = self.bno.acceleration
+            gyro_x, gyro_y, gyro_z = self.bno.gyro
+            mag_x, mag_y, mag_z = self.bno.magnetic
+            quat_i, quat_j, quat_k, quat_real = self.bno.quaternion
 
-        vl = data["M1"] + data["M4"]
-        vr = data["M2"] + data["M3"]
+            now = self.get_clock().now().to_msg()
 
-        # Differential drive kinematics
-        v = (vr + vl) / 2.0
-        omega = (vr - vl) / self.wheel_base
+            imu_msg = Imu()
+            imu_msg.header.stamp = now
+            imu_msg.header.frame_id = 'imu_link'
 
-        # Update pose
-        self.theta += omega * dt
-        self.x += v * math.cos(self.theta) * dt
-        self.y += v * math.sin(self.theta) * dt
+            imu_msg.orientation.x = float(quat_i)
+            imu_msg.orientation.y = float(quat_j)
+            imu_msg.orientation.z = float(quat_k)
+            imu_msg.orientation.w = float(quat_real)
 
-        # Construct message
-        self.odom = Odometry()
-        self.odom.header.frame_id = "odom_link"
-        self.odom.child_frame_id = "base_link"
+            imu_msg.angular_velocity.x = float(gyro_x)
+            imu_msg.angular_velocity.y = float(gyro_y)
+            imu_msg.angular_velocity.z = float(gyro_z)
 
-        self.odom.pose.pose.position.x = self.x
-        self.odom.pose.pose.position.y = self.y
-        self.odom.pose.pose.position.z = 0.0
+            imu_msg.linear_acceleration.x = float(accel_x)
+            imu_msg.linear_acceleration.y = float(accel_y)
+            imu_msg.linear_acceleration.z = float(accel_z)
 
-        q = Quaternion()
-        q.w = math.cos(self.theta / 2)
-        q.x = 0.0
-        q.y = 0.0
-        q.z = math.sin(self.theta / 2)
-        self.odom.pose.pose.orientation = q
+            self.imu_pub.publish(imu_msg)
 
-        self.odom.twist.twist.linear.x = v
-        self.odom.twist.twist.angular.z = omega
+            mag_msg = MagneticField()
+            mag_msg.header.stamp = now
+            mag_msg.header.frame_id = 'imu_link'
+            mag_msg.magnetic_field.x = float(mag_x) * 1e-6
+            mag_msg.magnetic_field.y = float(mag_y) * 1e-6
+            mag_msg.magnetic_field.z = float(mag_z) * 1e-6
 
-        self.publisher_odom.publish(self.odom)
+            self.mag_pub.publish(mag_msg)
 
-#        self.roll = math.radians(float(data["r"]))
-#        self.pitch = math.radians(float(data["p"]))
-#        self.yaw = float(data["y"])
-      
-#        q = tf3d.euler.euler2quat(self.roll, self.pitch, self.yaw)
-
-#        print(q)
-
-#        self.imu.orientation.x = 0
-#        self.imu.orientation.y = 0
-#        self.imu.orientation.z = 0
-#        self.imu.orientation.w = 1
-
-#        self.imu.orientation_covariance = [
-#        0.01,0.0,0.0,
-#        0.0,0.01,0.0,
-#        0.0,0.0,0.01
-#        ]
-
-#        self.imu.angular_velocity_covariance = [
-#        0.02,0.0,0.0,
-#        0.0,0.02,0.0,
-#        0.0,0.0,0.02
-#        ]
-
-#        self.imu.linear_acceleration_covariance = [
-#        0.04,0.0,0.0,
-#        0.0,0.04,0.0,
-#        0.0,0.0,0.04
-#        ]
-
-#        self.imu.linear_acceleration.x = 0
-#        self.imu.linear_acceleration.y = 0
-#        self.imu.linear_acceleration.z = 9.80665 
-
-#        self.imu.angular_velocity.x = 0
-#        self.imu.angular_velocity.y = 0
-#        self.imu.angular_velocity.z = 0
-
-#        self.imu.header.frame_id = "imu_link"
-
-        #self.imu.header.stamp = self.get_clock().now().to_msg()
-       # self.imu.header.stamp = self.timestamp
-#        self.publisher_imu.publish(self.imu)
-
-#    def depth_callback(self, msg: Image):
-#        self.timestamp = msg.header.stamp
-
-#        self.imu.header.stamp = self.timestamp
-#        print(self.timestamp)
-#        self.publisher_imu.publish(self.imu)
-
+        except Exception as e:
+            self.get_logger().warning(f"I2C Read Error: {e}")
 
 def main(args=None):
     rclpy.init(args=args)
-    odom_node = OdomNode()
+    imu_node = BNO08XNode()
     try:
-        rclpy.spin(odom_node)
-    except (SystemExit, KeyboardInterrupt):
-        pass
+        rclpy.spin(imu_node)
+    except KeyboardInterrupt:
+        node.get_logger().info("Shutting down BNO08X node...")
     finally:
-        odom_node.destroy_node()
+        node.destroy_node()
         rclpy.shutdown()
 
 if __name__ == '__main__':
     main()
+

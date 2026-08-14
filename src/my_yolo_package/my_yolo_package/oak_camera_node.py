@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import depthai as dai
 import torch
+import signal
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, CameraInfo, Imu
@@ -21,7 +22,6 @@ from ament_index_python.packages import get_package_share_directory
 class OakCameraNode(Node):
     def __init__(self):
         super().__init__("oak_camera_node")
-        
         cnfg_abs_path = "/home/wb/Desktop/Drobage/src/my_yolo_package/share"
         print(cnfg_abs_path)
         self.get_logger().info("Trying to load calibration file...")
@@ -110,7 +110,7 @@ class OakCameraNode(Node):
             return
 
 
-        timer_period = float(1.0 / 20)
+        timer_period = float(1.0 / 10)
         self.timer = self.create_timer(timer_period, self.time_callback)
 #
         self.rgb_timer = self.create_timer(timer_period, self.publish_rgb_image)
@@ -118,8 +118,14 @@ class OakCameraNode(Node):
         self.depth_original_timer = self.create_timer(timer_period, self.publish_depth_original_image)
         self.caminfo_timer = self.create_timer(timer_period, self.publish_caminfo)
         self.imu_timer = self.create_timer(timer_period, self.publish_imu)
+
+        self.recording = True
+        self.fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        self.out = cv2.VideoWriter(f"/home/wb/Desktop/output_{self.get_clock().now()}.mp4", self.fourcc, 20.0, (640, 480))
+        signal.signal(signal.SIGTERM, self.cleanup)
+#        signal.signal(signal.SIGINT, self.cleanup) 
 #
-        atexit.register(self.cleanup)
+#        atexit.register(self.cleanup)
 
 ####
     def imu_callback(self):
@@ -157,10 +163,11 @@ class OakCameraNode(Node):
 
         self.imu.header.frame_id = "imu_link"
 
+
 ###
 
-
     def time_callback(self):
+        print("alive")
         depth_in = self.disparityQueue.get() #tryGet()
         messageGroup = self.queue.get()  #tryGet()
         if depth_in is None:
@@ -176,7 +183,10 @@ class OakCameraNode(Node):
             return 
 
         rgb_frame = rgb_in.getCvFrame()
-
+###
+        if self.recording and hasattr(self, "out") and self.out is not None:
+            self.out.write(rgb_frame)
+### 
         self.npDisparity  = depth_in.getFrame()
         self.maxDisparity = max(self.maxDisparity, np.max(self.npDisparity))
         normalizedDisparity = ((self.npDisparity / self.maxDisparity) * 255).astype(np.uint8)
@@ -231,7 +241,17 @@ class OakCameraNode(Node):
  
 
 
-    def cleanup(self):
+    def cleanup(self,signum,frame):
+####
+        try:
+            if hasattr(self, "out") and self.out is not None:
+                self.out.release()
+                self.out = None
+                self.recording = False
+        except Exception as e:
+            print(e)
+
+###
         if hasattr(self, 'device'):
             self.device.close()
             self.get_logger().info("OAK-D device closed.")

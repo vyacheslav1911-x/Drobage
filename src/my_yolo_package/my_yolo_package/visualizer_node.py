@@ -93,7 +93,10 @@ class Visualizer(Node):
         self.distance_m = None
         self.distance_predicted = None
         self.side_error_out = None
-
+        self.region = None
+#
+        self.error_x = None
+#
         self.bbox = None
         self.bb_center = None    
         self.x1 = None
@@ -101,7 +104,9 @@ class Visualizer(Node):
         self.y1 = None
         self.y2 = None
         self.detected = False
-
+#
+#        self.region = None
+#
         self.disparity_spike = False
         self.prev_distance = None
         self.last_valid_distance = None
@@ -185,78 +190,73 @@ class Visualizer(Node):
         msg_invalid = Bool()
         msg_recovery = Bool()
         msg_3d_coords = Point()
- 
-        if not self.detected and self.bbox is None:
-            return
-        if self.executing:      #
-            return              #
-        if self.x1 is not None and self.y1 is not None and self.depth_frame is not None and self.detected:
-            self.region = self.depth_frame[int(self.y1-(self.y1*0.01)):int(self.y2-(self.y2*0.01)), self.x1:self.x2]
-        self.valid_pixels = self.region[(~np.isnan(self.region)) & (self.region > 0)]
-        self.disparity_value = np.mean(self.valid_pixels)
-        if self.disparity_value < 0.1:
-            self.disparity_value = 0.1
-        self.distance_m = (self.f_x * self.B) / self.disparity_value + 0.05 
+        try:
+            if not self.detected and self.bbox is None:
+                return
+            if self.executing:      #
+                return              #
+            if self.x1 is not None and self.y1 is not None and self.depth_frame is not None and self.detected:
+                self.region = self.depth_frame[int(self.y1-(self.y1*0.01)):int(self.y2-(self.y2*0.01)), self.x1:self.x2]
+            self.valid_pixels = self.region[(~np.isnan(self.region)) & (self.region > 0)]
+            self.disparity_value = np.mean(self.valid_pixels)
+            if self.disparity_value < 0.1:
+                self.disparity_value = 0.1
+            self.distance_m = (self.f_x * self.B) / self.disparity_value + 0.05 
 #######
-        z = self.distance_m
-        X = (self.x_center - 313.368) * z/ self.f_x #(u - c_x) * z / f_x
-        Y = (self.y_center - 224.113) * z/ 456.957  #(v - c_y) * z/ f_y
-        Z = z
-        Y = -Y+0.05
-        if Y <= float(0.00):
-            Y = 0.0
-        print(Z, X, Y)
+            z = self.distance_m
+            X = (self.x_center - 313.368) * z/ self.f_x #(u - c_x) * z / f_x
+            Y = (self.y_center - 224.113) * z/ 456.957  #(v - c_y) * z/ f_y
+            Z = z
+            Y = -Y+0.05
+            if Y <= float(0.00):
+                Y = 0.0
+            print(Z, X, Y)
 
-        msg_3d_coords.x = Z
-        msg_3d_coords.y = X
-        msg_3d_coords.z = Y
+            msg_3d_coords.x = Z
+            msg_3d_coords.y = X
+            msg_3d_coords.z = Y
 
-#        p_camera = np.array([[X, Y, Z, 1.0]]).reshape(-1,1)
-#        T_c_to_a = np.array([[1, 0, 0, 0.07],
-#                             [0, 1, 0, 0.0],
-#                             [0, 0, 1, 0.09],
-#                             [0, 0, 0, 1.0]])
-#        p_arm = T_c_to_a @ p_camera
-#        print(p_arm)
 #######
  
-        self.disparity_spike = self.is_disparity_spike(self.distance_m, self.prev_distance)
-        if self.disparity_spike and not self.measurement_invalid:
-            self.measurement_invalid = True
-            self.recovery = False
-        if self.measurement_invalid:
-            self.recovery = self.recovered(self.distance_m, self.last_valid_distance)     
-            if self.recovery or self.detected:
-                self.measurement_invalid = False
-            if self.distance_predicted is not None and not self.recovery:
-                print("KALMAN CALCULATED")
-                difference = abs(self.distance_predicted - self.last_valid_distance)
-                distance_out = self.last_valid_distance - difference
+            self.disparity_spike = self.is_disparity_spike(self.distance_m, self.prev_distance)
+            if self.disparity_spike and not self.measurement_invalid:
+                self.measurement_invalid = True
+                self.recovery = False
+            if self.measurement_invalid:
+                self.recovery = self.recovered(self.distance_m, self.last_valid_distance)     
+                if self.recovery or self.detected:
+                    self.measurement_invalid = False
+                if self.distance_predicted is not None and not self.recovery:
+                    print("KALMAN CALCULATED")
+                    difference = abs(self.distance_predicted - self.last_valid_distance)
+                    distance_out = self.last_valid_distance - difference
           
 
-        if not self.measurement_invalid:
-            if self.detected: 
-                print("DETECTED")
-                distance_out = self.distance_m
-                self.last_valid_distance = self.distance_m
-            elif not self.detected:
-                print("ACTUAL KALMAN")
-                distance_out = self.distance_predicted
+            if not self.measurement_invalid:
+                if self.detected: 
+                    print("DETECTED")
+                    distance_out = self.distance_m
+                    self.last_valid_distance = self.distance_m
+                elif not self.detected:
+                    print("ACTUAL KALMAN")
+                    distance_out = self.distance_predicted
 
-        self.prev_distance = self.distance_m     
-        print(f"SPIKE: {self.disparity_spike}")
-        print(f"MEASUREMENT INVALID: {self.measurement_invalid}")
-        print(f"RECOVERY: {self.recovery}")
-        print(f"LAST VALID DISTANCE: {self.last_valid_distance}")
-        print(f"DISTANCE: {distance_out}")
-        msg.data = round(distance_out, 2)
-        msg_invalid.data = self.measurement_invalid
-        msg_recovery.data = self.recovery
-        print(msg)
-        self.publisher_frwd_dist.publish(msg)
-        self.publisher_meas_invalid.publish(msg_invalid)
-        self.publisher_recovery.publish(msg_recovery)  
-        self.publisher_object_coords.publish(msg_3d_coords) 
+            self.prev_distance = self.distance_m     
+            print(f"SPIKE: {self.disparity_spike}")
+            print(f"MEASUREMENT INVALID: {self.measurement_invalid}")
+            print(f"RECOVERY: {self.recovery}")
+            print(f"LAST VALID DISTANCE: {self.last_valid_distance}")
+            print(f"DISTANCE: {distance_out}")
+            msg.data = round(distance_out, 2)
+            msg_invalid.data = self.measurement_invalid
+            msg_recovery.data = self.recovery
+            print(msg)
+            self.publisher_frwd_dist.publish(msg)
+            self.publisher_meas_invalid.publish(msg_invalid)
+            self.publisher_recovery.publish(msg_recovery)  
+            self.publisher_object_coords.publish(msg_3d_coords) 
+        except Exception as e:
+            self.get_logger().info("Exception")
 
     def tracking_loop(self):
         if self.distance_m is None:
@@ -274,7 +274,7 @@ class Visualizer(Node):
 
            
     def side_tracking_loop(self):
-        if self.bbox is None:
+        if self.bbox is None or self.error_x is None:
             return
         if self.side_tracker is None and self.bbox is not None and self.error_x is not None:
             self.side_tracker = KalmanBox.Lateral(self.error_x)
@@ -294,6 +294,10 @@ class Visualizer(Node):
             self.error_x = int(self.bb_center[0] - self.image_center[0])
             self.last_valid_side_error = self.error_x 
             self.side_error_out = self.error_x
+###
+        if self.side_error_out is None:
+            return
+###
         elif not self.detected:
             self.side_error_out = self.last_valid_side_error
         msg.data = max(-320, min(int(self.side_error_out), 320))
@@ -305,26 +309,26 @@ class Visualizer(Node):
         msg.data = self.detected
         self.publisher_det.publish(msg) 
 
-    def visualize(self):
-        while rclpy.ok():
-            if self.annotated_frame is None or self.depth_frame_colorized is None:
-                time.sleep(0.01)
-                continue
-            self.combined_streams = np.hstack([self.annotated_frame, self.depth_frame_colorized])
- #           self.out.write(self.combined_streams)
-            cv2.imshow("Combined Stream", self.combined_streams)
+#    def visualize(self):
+#        while rclpy.ok():
+#            if self.annotated_frame is None or self.depth_frame_colorized is None:
+#                time.sleep(0.01)
+#                continue
+#            self.combined_streams = np.hstack([self.annotated_frame, self.depth_frame_colorized])
+#            self.out.write(self.combined_streams)
+#            cv2.imshow("Combined Stream", self.combined_streams)
      
-            if cv2.waitKey(1) == ord("q"):
+#            if cv2.waitKey(1) == ord("q"):
 #                self.out.release()
-                break  
+#                break  
 
 
 def main(args=None):
     rclpy.init(args=args)
     visualizer_node = Visualizer()
 
-    vis_thread = threading.Thread(target=visualizer_node.visualize, daemon=True)
-    vis_thread.start()
+#    vis_thread = threading.Thread(target=visualizer_node.visualize)
+#    vis_thread.start()
     
    
     try:

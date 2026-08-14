@@ -7,13 +7,32 @@ import os
 from launch.actions import IncludeLaunchDescription, TimerAction
 
 def generate_launch_description():
-    Node(
+    camera_node = Node(
+        package='my_yolo_package',
+        executable='oak_camera_node',
+        name='camera'
+    )
+    inference = Node(
+        package='my_yolo_package',
+        executable='inference_node',
+        name='inference'
+    )
+    visualizer = Node(
+        package='my_yolo_package',
+        executable='visualizer_node',
+        name='visualizer'
+    )
+    control = Node(
         package='robot_ctrl_package',
         executable='control_node',
         name='control'
     )
    
 
+
     return LaunchDescription([
+        camera_node,
+        inference,
+        visualizer,
         control
     ])

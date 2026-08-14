@@ -10,6 +10,7 @@ from enum import Enum, auto
 import threading
 import serial
 import json
+import os
 
 class PIController:
     class Forward:
@@ -49,7 +50,7 @@ class PIController:
 
 
 class States(Enum):
-    APPROACH = auto()
+    IDLE = auto()
     MOVING = auto()
     CENTERING = auto()
     STOP = auto()
@@ -70,7 +71,16 @@ class Control(Node):
 
         self.ip = "192.168.4.1"
         self.session = requests.Session()
-        self.ser = serial.Serial('/dev/ttyACM1', baudrate=115200)
+#####
+        self.SERIAL_DEV =["/dev/ttyACM1", "/dev/ttyACM2", "/dev/ttyACM3"]
+        self.ser = None
+        self.using_serial = False
+        for dev in self.SERIAL_DEV:
+            if os.path.exists(dev):
+                self.ser = serial.Serial(dev, baudrate=115200)
+                self.get_logger().info("Using Serial")
+                self.using_serial = True
+#####
 
         self.speed = None
 
@@ -84,7 +94,7 @@ class Control(Node):
         self.full_stop = False
         self.executing = False
 
-        self.state = States.APPROACH
+        self.state = States.IDLE #APPROACH
 
         self.frwd_controller = PIController.Forward(self.Kp_frwd, self.Ki_frwd)
         self.side_controller = PIController.Side(self.Kp_side, self.Ki_side) 
@@ -108,6 +118,19 @@ class Control(Node):
         self.create_timer(float(1/10), self.first_detection)
         self.create_timer(float(1/10), self.print_timer)
         self.create_timer(float(1/10), self.detection)
+        self.create_timer(float(1/10), self.serial_check)
+
+    def serial_check(self):
+        for dev in self.SERIAL_DEV:
+            try:
+                if os.path.exists(dev):
+                    self.ser = serial.Serial(dev, baudrate=115200)
+                    self.get_logger().info("Using Serial")
+                    self.using_serial = True
+                else:
+                    self.using_serial = False
+            except PermissionError as e:
+                self.get_logger().info(e)
 
 
     def forward_error_callback(self, msg):
@@ -136,9 +159,11 @@ class Control(Node):
         json_send =  f"http://{self.ip}/js?json={json_command}"
 #        json_ser = json.dumps(json_command) ###
         try:
-            self.ser.write((json_command + "\n").encode("utf-8"))
-            self.ser.flush()     
-#            self.session.get(json_send, timeout=0.4)
+            if self.using_serial:
+                self.ser.write((json_command + "\n").encode("utf-8"))
+                self.ser.flush()
+            if not self.using_serial: 
+                self.session.get(json_send, timeout=0.4)
         except Exception as e:
             print("HTTP error: ", e)
 
@@ -148,7 +173,7 @@ class Control(Node):
 
     def update_state(self):
         if self.detection_count == 0 and not self.detected:
-            self.state = States.APPROACH
+            self.state = States.IDLE
             
         if self.distance_m is None or self.side_error is None:
             return
@@ -160,7 +185,7 @@ class Control(Node):
             self.full_stop = False
 
         if self.detected:
-            self.approach_mode = False
+#            self.approach_mode = False
             self.detection_count += 1       
 
 #        if abs(self.side_error) > 20:
@@ -180,7 +205,7 @@ class Control(Node):
 
 
     def approach(self):
-        self.send_command(1, 100, 100)
+        self.send_command(1, 0, 0)
 
     def moving(self):
         error = self.distance_m - self.TARGET_DISTANCE
@@ -221,9 +246,9 @@ class Control(Node):
              return
 ###
          self.update_state()
-         if self.state == States.APPROACH:
+         if self.state == States.IDLE:
              self.approach()
-         elif self.state == States.MOVING:
+         if self.state == States.MOVING:
              self.moving()
          elif self.state == States.CENTERING:
              self.centering()
@@ -234,7 +259,7 @@ class Control(Node):
              msg_stop.data = self.full_stop
              self.stop_publisher.publish(msg_stop)
          except AssertionError as e:
-             print(e)
+             self.get_logger().info(e)
 
 
     def detection(self):

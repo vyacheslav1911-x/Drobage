@@ -89,7 +89,7 @@ class YoloNode(Node):
                 self.get_logger().info("Message was received succesfully")
 
                 self.cv_image = self.bridge.imgmsg_to_cv2(self.latest_frame, 'bgr8')
-                print(self.model.names)
+#                print(self.model.names)
                 infr_rslts = self.model(
                 source=self.cv_image,
                 device = self.device,

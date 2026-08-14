@@ -1,4 +1,6 @@
 from setuptools import setup
+from glob import glob
+import os
 
 package_name = 'my_yolo_package'
 
@@ -10,6 +12,7 @@ setup(
         ('share/ament_index/resource_index/packages',
             ['resource/' + package_name]),
         ('share/' + package_name, ['package.xml']),
+        ('share/' + package_name + '/launch', glob(os.path.join('launch', '*launch.py')))
     ],
     install_requires=['setuptools'],
     zip_safe=True,
@@ -24,7 +27,8 @@ setup(
             'visualizer_node = my_yolo_package.visualizer_node:main',
             'oak_camera_node = my_yolo_package.oak_camera_node:main',
             'tracking_logger = my_yolo_package.tracking_logger:main',
-            'odom_node = my_yolo_package.odom_node:main'
+            'odom_node = my_yolo_package.odom_node:main',
+            'imu_node = my_yolo_package.imu_node:main'
         ],
     },
 )
