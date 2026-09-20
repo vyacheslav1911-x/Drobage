@@ -1,5 +1,14 @@
 planning_plugins:
   - ompl_interface/OMPLPlanner
-request_adapters: "default_planner_request_adapters/ResolveConstraintFrames default_planner_request_adapters/FixWorkspaceBounds default_planner_request_adapters/FixStartStateCollision default_planner_request_adapters/AddTimeOptimalParameterization"
-response_adapters: "default_planner_response_adapters/AddTimeOptimalParameterization default_planner_response_adapters/ValidateSolution"
+# Jazzy (MoveIt 2.12) takes these as string arrays, not space-separated strings,
+# and renamed the adapters from the Humble-era default_planner_*_adapters/Fix*.
+request_adapters:
+  - default_planning_request_adapters/ResolveConstraintFrames
+  - default_planning_request_adapters/ValidateWorkspaceBounds
+  - default_planning_request_adapters/CheckStartStateBounds
+  - default_planning_request_adapters/CheckStartStateCollision
+response_adapters:
+  - default_planning_response_adapters/AddTimeOptimalParameterization
+  - default_planning_response_adapters/ValidateSolution
+  - default_planning_response_adapters/DisplayMotionPath
 start_state_max_bounds_error: 0.1

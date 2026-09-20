@@ -3,11 +3,17 @@
 <package format="3">
   <name>roarm_description</name>
   <version>0.0.0</version>
-  <description>TODO: Package description</description>
+  <description>URDF/xacro description and meshes for the RoArm M3 Pro</description>
   <maintainer email="v1@todo.todo">v1</maintainer>
-  <license>TODO: License declaration</license>
+  <license>MIT</license>
 
-  <depend>rclpy</depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>urdf</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>joint_state_publisher_gui</exec_depend>
+  <exec_depend>rviz2</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

@@ -16,6 +16,7 @@ from moveit_msgs.msg import (
 from control_msgs.action import GripperCommand
 from geometry_msgs.msg import PoseStamped, Point, Quaternion
 from std_msgs.msg import Bool
+from sensor_msgs.msg import JointState  #change
 import threading
 import math
 import time
@@ -43,6 +44,14 @@ class MoveToXYZServer(Node):
         self.subscriber_object_coords = self.create_subscription(Point, "object_coords", self.object_coords_callback, 1)
         self.subscriber_det = self.create_subscription(Bool, "detection", self.detection_callback,  1)
         self.subscriber_stop = self.create_subscription(Bool, "stop", self.stop_callback, 1)
+
+        # IK seed. Without this KDL starts from an arbitrary guess and can  #change
+        # return a valid but wildly different branch (arm folded backwards,  #change
+        # base and wrist each 180 degrees round), which shows up as the arm  #change
+        # unwinding a full turn between two nearby targets.  #change
+        self.current_joint_state = None  #change
+        self.subscriber_joints = self.create_subscription(  #change
+            JointState, "joint_states", self.joint_state_callback, 10)  #change
 
         self.publisher_exec = self.create_publisher(Bool, "executing_xyz", 5)
 
@@ -77,6 +86,10 @@ class MoveToXYZServer(Node):
             callback_group=self.cb_group
         )
 
+        self.get_logger().info('Waiting for compute_ik service...')  #change
+        self.ik_client.wait_for_service()  #change
+        self.get_logger().info('Connected to compute_ik')  #change
+
         self.pick_srv = self.create_service(
             MoveToXYZ,
             'pick_sequential',
@@ -84,12 +97,25 @@ class MoveToXYZServer(Node):
             callback_group=self.cb_group
         )
         self.get_logger().info('Service /pick_seqential  ready')
+
+        # Single move, no grasp — lets you command an XYZ target directly:  #change
+        #   ros2 service call /move_to_xyz roarm_msgs/srv/MoveToXYZ "{x: 0.2, y: 0.0, z: 0.15}"  #change
+        self.move_srv = self.create_service(  #change
+            MoveToXYZ,  #change
+            'move_to_xyz',  #change
+            self.handle_move_request,  #change
+            callback_group=self.cb_group  #change
+        )  #change
+        self.get_logger().info('Service /move_to_xyz ready')  #change
 ###
     def object_coords_callback(self, msg: Point):
         self.x = msg.x
         self.y = -msg.y
         self.z = msg.z
         print(self.x, self.y, self.z)
+
+    def joint_state_callback(self, msg: JointState):  #change
+        self.current_joint_state = msg  #change
 
     def detection_callback(self, msg: Bool):
         self.detected = bool(msg.data)
@@ -268,36 +294,45 @@ class MoveToXYZServer(Node):
 
 
     def solve_ik(self, x, y, z):
-        pitch_values = [10,13,15,18 ,20, 30, 40, 50, 60, 70, 80, 85, 90, 0, 120, 150, 180]
+        # Tried in order, first solution wins. Pitch is the angle between the  #change
+        # gripper's approach axis and the horizontal: 90 = straight down.  #change
+        # Top-down costs reach, so fall back to shallower angles when 90 fails.  #change
+        pitch_values = [90, 85, 80, 70, 60, 50, 40, 30, 20, 18, 15, 13, 0, 120, 150, 180]  #change
+        result = None  #change
 
-        # Base angle — the base joint needs to point at the object
-        base_angle = math.atan2(y, x)
-
-        # Distance in horizontal plane — this is what the arm sees in its own plane
-        dist = math.sqrt(x * x + y * y)
-        link1_x = dist
-        link1_y = 0.0
-        link1_z = z
+        # Yaw that points the arm at the object. This goes into the requested  #change
+        # orientation rather than being written over the base joint afterwards:  #change
+        # KDL may return a solution whose base is offset by pi with the rest of  #change
+        # the arm flipped to match, and overwriting the base in that case  #change
+        # mirrors the tool to the opposite side of the robot.  #change
+        yaw = math.atan2(y, x)  #change
+        # removed: dist / link1_x / link1_y / link1_z -- the target used to be
+        # collapsed onto the y=0 plane before being sent to IK  #change
 
         for pdeg in pitch_values:
             pitch = math.radians(pdeg)
 
-            qw = math.cos(pitch / 2)
-            qx = 0.0
-            qy = math.sin(pitch / 2)
-            qz = 0.0
+            # Rz(yaw) * Ry(pitch)  #change
+            cy, sy = math.cos(yaw / 2), math.sin(yaw / 2)  #change
+            cp, sp = math.cos(pitch / 2), math.sin(pitch / 2)  #change
+            qx, qy, qz, qw = -sy * sp, cy * sp, sy * cp, cy * cp  #change
 
             ik_request = GetPositionIK.Request()
             ik_request.ik_request.group_name = 'hand'
             ik_request.ik_request.pose_stamped = PoseStamped()
             ik_request.ik_request.pose_stamped.header.frame_id = 'world'
             ik_request.ik_request.pose_stamped.pose.position = Point(
-                x=link1_x, y=link1_y, z=link1_z
+                x=x, y=y, z=z  #change
             )
             ik_request.ik_request.pose_stamped.pose.orientation = Quaternion(
                 x=qx, y=qy, z=qz, w=qw
             )
             ik_request.ik_request.avoid_collisions = True
+
+            # Start the solver from where the arm actually is, so it returns  #change
+            # the nearest solution instead of an arbitrary one.  #change
+            if self.current_joint_state is not None:  #change
+                ik_request.ik_request.robot_state.joint_state = self.current_joint_state  #change
 
             event = threading.Event()
             future = self.ik_client.call_async(ik_request)
@@ -305,21 +340,35 @@ class MoveToXYZServer(Node):
             event.wait()
 
             result = future.result()
-            if result.error_code.val == 1:
-                self.get_logger().info(f'IK SOLVEEEEED: pitch={pdeg}° base={math.degrees(base_angle):.1f}°')
-
-                # Override the base joint with the correct angle
+            if result is not None and result.error_code.val == 1:  #change
                 names = list(result.solution.joint_state.name)
                 positions = list(result.solution.joint_state.position)
+                base = positions[names.index('base_link_to_link1')]  #change
+                # removed: positions[base_idx] = base_angle -- overwriting the
+                # base joint of a pi-flipped IK branch mirrored the tool to the
+                # wrong side of the robot  #change
 
-                base_idx = names.index('base_link_to_link1')
-                positions[base_idx] = base_angle
+                # A sane solution points the base at the object. If it is off  #change
+                # by more than a right angle the arm is reaching backwards and  #change
+                # folding over itself to hit the same point -- correct pose,  #change
+                # absurd path. Skip it and try the next pitch.  #change
+                off = abs(math.atan2(math.sin(base - yaw), math.cos(base - yaw)))  #change
+                if off > math.pi / 2:  #change
+                    self.get_logger().warn(  #change
+                        f'REJECTED: pitch={pdeg}° base={math.degrees(base):.1f}° '  #change
+                        f'is {math.degrees(off):.0f}° from yaw={math.degrees(yaw):.1f}°'  #change
+                    )  #change
+                    continue  #change
 
-                result.solution.joint_state.position = positions
+                self.get_logger().info(  #change
+                    f'IK SOLVEEEEED: pitch={pdeg}° yaw={math.degrees(yaw):.1f}° '  #change
+                    f'base={math.degrees(base):.1f}°'  #change
+                )  #change
                 return result
 
             self.get_logger().warn(f'FAILED: pitch={pdeg}°')
 
+        self.get_logger().error(f'IK failed at every pitch for ({x}, {y}, {z})')  #change
         return result
     
     def handle_move_request(self, request, response):
@@ -328,6 +377,12 @@ class MoveToXYZServer(Node):
         )
 
         ik_result = self.solve_ik(request.x, request.y, request.z)
+
+        if ik_result is None:  #change
+            response.success = False  #change
+            response.message = 'IK service returned no result'  #change
+            self.get_logger().error(response.message)  #change
+            return response  #change
 
         if ik_result.error_code.val != 1:
             response.success = False
